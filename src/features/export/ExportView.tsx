@@ -26,8 +26,11 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     bracketMatches,
   } = useTournamentStore();
 
+  const [error, setError] = useState<string | null>(null);
+
   const downloadPDF = async (pdfDocument: Parameters<typeof pdf>[0], defaultFilename: string) => {
     setExporting(true);
+    setError(null);
     try {
       const blob = await pdf(pdfDocument).toBlob();
       const arrayBuffer = await blob.arrayBuffer();
@@ -41,8 +44,9 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       if (filePath) {
         await writeFile(filePath, uint8Array);
       }
-    } catch (error) {
-      console.error('Failed to export PDF:', error);
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setExporting(false);
     }
@@ -93,6 +97,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     if (!currentTournament) return;
 
     setExporting(true);
+    setError(null);
     try {
       const backup = {
         tournament: currentTournament,
@@ -117,8 +122,9 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       if (filePath) {
         await writeFile(filePath, uint8Array);
       }
-    } catch (error) {
-      console.error('Failed to export backup:', error);
+    } catch (err) {
+      console.error('Failed to export backup:', err);
+      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setExporting(false);
     }
@@ -127,6 +133,12 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   return (
     <div className="space-y-6">
       <h2 className="text-lg font-semibold text-gray-900">{t('export.title')}</h2>
+
+      {error && (
+        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
