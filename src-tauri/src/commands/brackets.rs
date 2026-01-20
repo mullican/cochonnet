@@ -252,13 +252,14 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
 
         // Create main bracket
         let bracket_id = Uuid::new_v4().to_string();
-        let actual_size = bracket_teams.len() as i32;
+        // Store power-of-2 bracket size for proper round calculation in UI
+        let power_of_2_size = (bracket_teams.len() as f64).log2().ceil().exp2() as i32;
         conn.execute(
             r#"
             INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
             VALUES (?1, ?2, ?3, 0, ?4, 0, ?5)
             "#,
-            params![bracket_id, tournament_id, bracket_name, actual_size, now],
+            params![bracket_id, tournament_id, bracket_name, power_of_2_size, now],
         )
         .map_err(|e| e.to_string())?;
 
@@ -608,13 +609,15 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
     // Create consolante bracket
     let consolante_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+    // Store power-of-2 bracket size for proper round calculation in UI
+    let power_of_2_size = (loser_ids.len() as f64).log2().ceil().exp2() as i32;
 
     conn.execute(
         r#"
         INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
         VALUES (?1, ?2, ?3, 1, ?4, 0, ?5)
         "#,
-        params![consolante_id, tournament_id, consolante_name, loser_ids.len() as i32, now],
+        params![consolante_id, tournament_id, consolante_name, power_of_2_size, now],
     )
     .map_err(|e| e.to_string())?;
 

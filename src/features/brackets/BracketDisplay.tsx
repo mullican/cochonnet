@@ -21,9 +21,7 @@ interface BracketDisplayProps {
 }
 
 // Height of a match card in pixels
-const MATCH_HEIGHT = 72;
-// Gap between rounds (including connector width)
-const ROUND_GAP = 48;
+const MATCH_HEIGHT = 84;
 // Width of connector lines
 const CONNECTOR_WIDTH = 24;
 
@@ -75,8 +73,28 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     return formatTeamName(team?.captain);
   };
 
+  // Check if a match can be edited (has both teams, and next round match hasn't been scored)
+  const canEditMatch = (match: BracketMatch) => {
+    // Must have both teams to enter a score
+    if (!match.team1Id || !match.team2Id) return false;
+
+    // BYE matches can't be edited
+    if (match.isBye) return false;
+
+    // If there's a next match, check if it has been scored
+    if (match.nextMatchId) {
+      const nextMatch = bracketMatches.find((m) => m.id === match.nextMatchId);
+      if (nextMatch && (nextMatch.team1Score !== null || nextMatch.team2Score !== null)) {
+        // Next round has scores, can't edit this match
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleMatchClick = (match: BracketMatch) => {
-    if (!match.team1Id || !match.team2Id || match.winnerId) return;
+    if (!canEditMatch(match)) return;
     setSelectedMatch(match);
     setTeam1Score(match.team1Score?.toString() || '');
     setTeam2Score(match.team2Score?.toString() || '');
@@ -111,8 +129,6 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   // Calculate the vertical spacing for a round based on the number of matches
   const getMatchSpacing = (roundNumber: number) => {
     // Each round has half the matches of the previous round
-    // First round: bracketSize / 2 matches
-    // Second round: bracketSize / 4 matches, etc.
     const matchesInRound = bracketSize / Math.pow(2, roundNumber);
     const totalHeight = bracketSize / 2 * MATCH_HEIGHT + (bracketSize / 2 - 1) * 16;
     const spacePerMatch = totalHeight / matchesInRound;
@@ -147,46 +163,58 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                     paddingTop: isFirstRound ? 0 : `${matchSpacing / 2}px`,
                   }}
                 >
-                  {matches.map((match, matchIndex) => (
-                    <Card
-                      key={match.id}
-                      className={`w-48 cursor-pointer transition-shadow ${
-                        match.team1Id && match.team2Id && !match.winnerId
-                          ? 'hover:shadow-md hover:border-primary-300'
-                          : ''
-                      }`}
-                      onClick={() => handleMatchClick(match)}
-                      style={{ height: `${MATCH_HEIGHT}px` }}
-                    >
-                      <CardContent className="p-3 h-full flex flex-col justify-center">
-                        <div
-                          className={`flex justify-between items-center py-0.5 ${
-                            match.winnerId === match.team1Id ? 'font-bold' : ''
-                          }`}
-                        >
-                          <span className="truncate text-sm">
-                            {match.isBye && !match.team1Id ? 'BYE' : getTeamName(match.team1Id)}
-                          </span>
-                          <span className="text-sm ml-2">
-                            {match.team1Score !== null ? match.team1Score : '-'}
-                          </span>
-                        </div>
-                        <div className="border-t border-gray-100 my-0.5" />
-                        <div
-                          className={`flex justify-between items-center py-0.5 ${
-                            match.winnerId === match.team2Id ? 'font-bold' : ''
-                          }`}
-                        >
-                          <span className="truncate text-sm">
-                            {match.isBye ? 'BYE' : getTeamName(match.team2Id)}
-                          </span>
-                          <span className="text-sm ml-2">
-                            {match.isBye ? '7' : match.team2Score !== null ? match.team2Score : '-'}
-                          </span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {matches.map((match) => {
+                    const isEditable = canEditMatch(match);
+                    return (
+                      <Card
+                        key={match.id}
+                        className={`w-48 transition-shadow ${
+                          isEditable
+                            ? 'cursor-pointer hover:shadow-md hover:border-primary-300'
+                            : 'cursor-default'
+                        }`}
+                        onClick={() => handleMatchClick(match)}
+                        style={{ height: `${MATCH_HEIGHT}px` }}
+                      >
+                        <CardContent className="p-2 h-full flex flex-col justify-between">
+                          {/* Court number */}
+                          <div className="text-xs text-gray-400 text-center">
+                            {match.courtNumber ? `Court ${match.courtNumber}` : ''}
+                          </div>
+
+                          {/* Team 1 */}
+                          <div
+                            className={`flex justify-between items-center ${
+                              match.winnerId === match.team1Id ? 'font-bold' : ''
+                            }`}
+                          >
+                            <span className="truncate text-sm">
+                              {match.isBye && !match.team1Id ? 'BYE' : getTeamName(match.team1Id)}
+                            </span>
+                            <span className="text-sm ml-2">
+                              {match.team1Score !== null ? match.team1Score : '-'}
+                            </span>
+                          </div>
+
+                          <div className="border-t border-gray-100" />
+
+                          {/* Team 2 */}
+                          <div
+                            className={`flex justify-between items-center ${
+                              match.winnerId === match.team2Id ? 'font-bold' : ''
+                            }`}
+                          >
+                            <span className="truncate text-sm">
+                              {match.isBye ? 'BYE' : getTeamName(match.team2Id)}
+                            </span>
+                            <span className="text-sm ml-2">
+                              {match.isBye ? '7' : match.team2Score !== null ? match.team2Score : '-'}
+                            </span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -299,6 +327,11 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
           </DialogHeader>
           {selectedMatch && (
             <div className="space-y-4">
+              {selectedMatch.courtNumber && (
+                <div className="text-sm text-gray-500 text-center">
+                  Court {selectedMatch.courtNumber}
+                </div>
+              )}
               <div className="flex items-center gap-4">
                 <div className="flex-1">
                   <label className="text-sm font-medium text-gray-700">
