@@ -7,6 +7,7 @@ import {
   CardContent,
   Input,
 } from '../../components/ui';
+import { formatTeamName } from '../../lib/utils';
 
 interface RoundGamesProps {
   roundId: string;
@@ -47,7 +48,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const getTeamName = (teamId: string | null | undefined) => {
     if (!teamId) return 'TBD';
     const team = teams.find((t) => t.id === teamId);
-    return team?.captain || 'Unknown';
+    return formatTeamName(team?.captain);
   };
 
   const handleScoreChange = (gameId: string, team: 'team1' | 'team2', value: string) => {
@@ -124,7 +125,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
                 <div className="text-center">
                   <div className="font-medium">{getTeamName(game.team1Id)}</div>
                   <div className="text-sm text-gray-500 mt-2">{t('pairing.bye')}</div>
-                  <div className="text-sm text-green-600 mt-1">13 - 0</div>
+                  <div className="text-sm text-green-600 mt-1">13 - 7</div>
                 </div>
               ) : (
                 <div className="space-y-3">

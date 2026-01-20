@@ -10,6 +10,7 @@ import {
   TableHead,
   TableCell,
 } from '../../components/ui';
+import { formatTeamName } from '../../lib/utils';
 
 interface StandingsTableProps {
   tournamentId: string;
@@ -25,7 +26,7 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
 
   const getTeamName = (teamId: string) => {
     const team = teams.find((t) => t.id === teamId);
-    return team?.captain || 'Unknown';
+    return formatTeamName(team?.captain);
   };
 
   if (loading) {

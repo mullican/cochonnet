@@ -1,5 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, QualifyingRound, QualifyingGame } from '../../types';
+import { formatTeamName } from '../../lib/utils';
 
 const styles = StyleSheet.create({
   page: {
@@ -76,7 +77,7 @@ export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPD
   const getTeamName = (teamId: string | null | undefined) => {
     if (!teamId) return 'TBD';
     const team = teams.find((t) => t.id === teamId);
-    return team?.captain || 'Unknown';
+    return formatTeamName(team?.captain);
   };
 
   const getGamesForRound = (roundId: string) => {
@@ -125,7 +126,7 @@ export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPD
                     </Text>
                     <Text style={styles.scoreCol}>-</Text>
                     <Text style={styles.scoreCol}>
-                      {game.isBye ? '0' : game.team2Score !== null ? game.team2Score : '___'}
+                      {game.isBye ? '7' : game.team2Score !== null ? game.team2Score : '___'}
                     </Text>
                     <Text style={[styles.teamCol, game.isBye ? styles.byeText : {}]}>
                       {game.isBye ? 'BYE' : getTeamName(game.team2Id)}

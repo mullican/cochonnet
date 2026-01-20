@@ -557,14 +557,15 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
     // Update standings for each game
     for (team1_id, team2_id, team1_score, team2_score, is_bye) in games {
         if is_bye {
-            // BYE: team gets a win with 13-0 score (FPUSA rules)
+            // BYE: team gets a win with 13-7 score (FPUSA rules)
             if let Some(t1) = team1_id {
                 conn.execute(
                     r#"
                     UPDATE team_standings SET
                         wins = wins + 1,
                         points_for = points_for + 13,
-                        differential = differential + 13
+                        points_against = points_against + 7,
+                        differential = differential + 6
                     WHERE tournament_id = ?1 AND team_id = ?2
                     "#,
                     params![tournament_id, t1],

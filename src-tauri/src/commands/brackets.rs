@@ -284,73 +284,78 @@ fn create_bracket_matches(
         return Err("Need at least 2 teams for a bracket".to_string());
     }
 
-    // Shuffle teams randomly for first round pairing
+    // Calculate bracket size (next power of 2)
+    let bracket_size = (num_teams as f64).log2().ceil().exp2() as usize;
+    let num_byes = bracket_size - num_teams;
+    let num_rounds = (bracket_size as f64).log2() as i32;
+    let first_round_match_count = bracket_size / 2;
+
+    // Teams are already sorted by rank (from standings)
+    // Top-ranked teams get BYEs, remaining teams play in round 1
+    let bye_teams: Vec<&Team> = teams.iter().take(num_byes).cloned().collect();
+    let playing_teams: Vec<&Team> = teams.iter().skip(num_byes).cloned().collect();
+
+    // Shuffle playing teams randomly for first round pairing
     let mut rng = rand::thread_rng();
-    let mut shuffled_teams: Vec<&Team> = teams.to_vec();
-    shuffled_teams.shuffle(&mut rng);
-
-    // Simple bracket structure:
-    // - Round 1: All teams paired (num_teams / 2 matches)
-    // - Round 2: Winners from round 1 paired
-    // - Continue until final
-
-    // Calculate number of rounds needed
-    let num_rounds = (num_teams as f64).log2().ceil() as i32;
-
-    // For simplicity, if odd number of teams, one gets a BYE
-    // But we'll handle this by placing them directly in round 2
-    let has_bye = num_teams % 2 == 1;
-    let first_round_match_count = num_teams / 2;
+    let mut shuffled_playing: Vec<&Team> = playing_teams;
+    shuffled_playing.shuffle(&mut rng);
 
     // Create match IDs for all rounds
     let mut match_ids: Vec<Vec<String>> = Vec::new();
-
-    // Round 1: first_round_match_count matches
-    let mut round_1_ids = Vec::new();
-    for _ in 0..first_round_match_count {
-        round_1_ids.push(Uuid::new_v4().to_string());
-    }
-    match_ids.push(round_1_ids);
-
-    // Subsequent rounds: halve the matches each round
-    let mut prev_round_teams = first_round_match_count + if has_bye { 1 } else { 0 }; // winners + bye team
-    for _ in 1..num_rounds {
-        let matches_this_round = prev_round_teams / 2;
+    for round in 0..num_rounds {
+        let matches_in_round = bracket_size >> (round + 1);
         let mut round_ids = Vec::new();
-        for _ in 0..matches_this_round {
+        for _ in 0..matches_in_round {
             round_ids.push(Uuid::new_v4().to_string());
         }
         match_ids.push(round_ids);
-        prev_round_teams = matches_this_round + (prev_round_teams % 2); // winners + potential bye
     }
 
-    // Insert first round matches - pair teams sequentially after shuffle
-    // Assign courts cycling through available courts
+    // Insert first round matches
+    // Some are BYE matches (team vs BYE), some are real matches
+    let mut playing_idx = 0;
+    let mut bye_idx = 0;
+
     for match_idx in 0..first_round_match_count {
         let match_id = &match_ids[0][match_idx];
-        let team1 = &shuffled_teams[match_idx * 2];
-        let team2 = &shuffled_teams[match_idx * 2 + 1];
         let court_number = (match_idx as i32 % number_of_courts) + 1;
+
+        // Determine if this is a BYE match
+        // BYE matches are distributed: first num_byes matches have a BYE
+        let is_bye_match = match_idx < num_byes;
+
+        let (team1_id, team2_id, is_bye) = if is_bye_match {
+            // BYE match: top-seeded team gets a bye
+            let team = bye_teams[bye_idx];
+            bye_idx += 1;
+            (Some(team.id.clone()), None, true)
+        } else {
+            // Real match: two teams play
+            let t1 = shuffled_playing[playing_idx];
+            let t2 = shuffled_playing[playing_idx + 1];
+            playing_idx += 2;
+            (Some(t1.id.clone()), Some(t2.id.clone()), false)
+        };
 
         conn.execute(
             r#"
             INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, 0)
+            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, ?7)
             "#,
             params![
                 match_id,
                 bracket_id,
                 match_idx as i32 + 1,
                 court_number,
-                team1.id,
-                team2.id,
+                team1_id,
+                team2_id,
+                if is_bye { 1 } else { 0 }
             ],
         )
         .map_err(|e| format!("Failed to insert first round match: {}", e))?;
     }
 
     // Insert subsequent round matches (empty, waiting for winners)
-    // Also assign courts for future rounds
     for round_idx in 1..match_ids.len() {
         let round_number = (round_idx + 1) as i32;
         for (match_idx, match_id) in match_ids[round_idx].iter().enumerate() {
@@ -372,26 +377,8 @@ fn create_bracket_matches(
         }
     }
 
-    // Set next_match_id links for round 1 to round 2
-    if match_ids.len() > 1 {
-        for (match_idx, match_id) in match_ids[0].iter().enumerate() {
-            // Account for potential BYE team taking first slot in round 2
-            let adjusted_idx = if has_bye { match_idx + 1 } else { match_idx };
-            let next_match_idx = adjusted_idx / 2;
-
-            if next_match_idx < match_ids[1].len() {
-                let next_match_id = &match_ids[1][next_match_idx];
-                conn.execute(
-                    "UPDATE bracket_matches SET next_match_id = ?2 WHERE id = ?1",
-                    params![match_id, next_match_id],
-                )
-                .map_err(|e| format!("Failed to set next_match_id: {}", e))?;
-            }
-        }
-    }
-
-    // Set next_match_id links for subsequent rounds
-    for round_idx in 1..(match_ids.len() - 1) {
+    // Set next_match_id links
+    for round_idx in 0..(match_ids.len() - 1) {
         for (match_idx, match_id) in match_ids[round_idx].iter().enumerate() {
             let next_match_idx = match_idx / 2;
             if next_match_idx < match_ids[round_idx + 1].len() {
@@ -405,16 +392,46 @@ fn create_bracket_matches(
         }
     }
 
-    // Handle BYE: if odd number of teams, last team goes directly to round 2
-    if has_bye && match_ids.len() > 1 {
-        let bye_team = &shuffled_teams[num_teams - 1];
-        // Place BYE team in first slot of round 2
-        let round_2_first_match = &match_ids[1][0];
-        conn.execute(
-            "UPDATE bracket_matches SET team1_id = ?2 WHERE id = ?1",
-            params![round_2_first_match, bye_team.id],
-        )
-        .map_err(|e| format!("Failed to place BYE team: {}", e))?;
+    // Auto-advance BYE matches (score 13-7)
+    for match_idx in 0..num_byes {
+        let match_id = &match_ids[0][match_idx];
+
+        let team1_id: Option<String> = conn
+            .query_row(
+                "SELECT team1_id FROM bracket_matches WHERE id = ?1",
+                params![match_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to query BYE match: {}", e))?;
+
+        if let Some(winner) = &team1_id {
+            // BYE score is 13-7
+            conn.execute(
+                "UPDATE bracket_matches SET winner_id = ?2, team1_score = 13, team2_score = 7 WHERE id = ?1",
+                params![match_id, winner],
+            )
+            .map_err(|e| format!("Failed to set BYE winner: {}", e))?;
+
+            // Advance winner to next match
+            if match_ids.len() > 1 {
+                let next_match_idx = match_idx / 2;
+                let next_match_id = &match_ids[1][next_match_idx];
+                let is_top_half = match_idx % 2 == 0;
+                if is_top_half {
+                    conn.execute(
+                        "UPDATE bracket_matches SET team1_id = ?2 WHERE id = ?1",
+                        params![next_match_id, winner],
+                    )
+                    .map_err(|e| format!("Failed to advance BYE winner: {}", e))?;
+                } else {
+                    conn.execute(
+                        "UPDATE bracket_matches SET team2_id = ?2 WHERE id = ?1",
+                        params![next_match_id, winner],
+                    )
+                    .map_err(|e| format!("Failed to advance BYE winner: {}", e))?;
+                }
+            }
+        }
     }
 
     Ok(())
@@ -619,51 +636,59 @@ fn create_consolante_matches(
         return Ok(());
     }
 
-    // Shuffle teams randomly
+    // Calculate bracket size (next power of 2)
+    let bracket_size = (num_teams as f64).log2().ceil().exp2() as usize;
+    let num_byes = bracket_size - num_teams;
+    let num_rounds = (bracket_size as f64).log2() as i32;
+    let first_round_match_count = bracket_size / 2;
+
+    // Consolante teams are already losers, no seeding - shuffle all
     let mut rng = rand::thread_rng();
     let mut shuffled: Vec<&String> = team_ids.iter().collect();
     shuffled.shuffle(&mut rng);
 
-    // Simple bracket structure - same as main brackets
-    let num_rounds = (num_teams as f64).log2().ceil() as i32;
-    let has_bye = num_teams % 2 == 1;
-    let first_round_match_count = num_teams / 2;
+    // First num_byes teams get BYEs (randomly selected after shuffle)
+    let bye_teams: Vec<&String> = shuffled.iter().take(num_byes).cloned().collect();
+    let playing_teams: Vec<&String> = shuffled.iter().skip(num_byes).cloned().collect();
 
     // Create match IDs for all rounds
     let mut match_ids: Vec<Vec<String>> = Vec::new();
-
-    // Round 1
-    let mut round_1_ids = Vec::new();
-    for _ in 0..first_round_match_count {
-        round_1_ids.push(Uuid::new_v4().to_string());
-    }
-    match_ids.push(round_1_ids);
-
-    // Subsequent rounds
-    let mut prev_round_teams = first_round_match_count + if has_bye { 1 } else { 0 };
-    for _ in 1..num_rounds {
-        let matches_this_round = prev_round_teams / 2;
+    for round in 0..num_rounds {
+        let matches_in_round = bracket_size >> (round + 1);
         let mut round_ids = Vec::new();
-        for _ in 0..matches_this_round {
+        for _ in 0..matches_in_round {
             round_ids.push(Uuid::new_v4().to_string());
         }
         match_ids.push(round_ids);
-        prev_round_teams = matches_this_round + (prev_round_teams % 2);
     }
 
-    // Insert first round matches with court assignment
+    // Insert first round matches
+    let mut playing_idx = 0;
+    let mut bye_idx = 0;
+
     for match_idx in 0..first_round_match_count {
         let match_id = &match_ids[0][match_idx];
-        let team1_id = shuffled[match_idx * 2];
-        let team2_id = shuffled[match_idx * 2 + 1];
         let court_number = (match_idx as i32 % number_of_courts) + 1;
+
+        let is_bye_match = match_idx < num_byes;
+
+        let (team1_id, team2_id, is_bye) = if is_bye_match {
+            let team = bye_teams[bye_idx];
+            bye_idx += 1;
+            (Some(team.clone()), None, true)
+        } else {
+            let t1 = playing_teams[playing_idx];
+            let t2 = playing_teams[playing_idx + 1];
+            playing_idx += 2;
+            (Some(t1.clone()), Some(t2.clone()), false)
+        };
 
         conn.execute(
             r#"
             INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, 0)
+            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, ?7)
             "#,
-            params![match_id, bracket_id, match_idx as i32 + 1, court_number, team1_id, team2_id],
+            params![match_id, bracket_id, match_idx as i32 + 1, court_number, team1_id, team2_id, if is_bye { 1 } else { 0 }],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -685,23 +710,7 @@ fn create_consolante_matches(
     }
 
     // Set next_match_id links
-    if match_ids.len() > 1 {
-        for (match_idx, match_id) in match_ids[0].iter().enumerate() {
-            let adjusted_idx = if has_bye { match_idx + 1 } else { match_idx };
-            let next_match_idx = adjusted_idx / 2;
-
-            if next_match_idx < match_ids[1].len() {
-                let next_match_id = &match_ids[1][next_match_idx];
-                conn.execute(
-                    "UPDATE bracket_matches SET next_match_id = ?2 WHERE id = ?1",
-                    params![match_id, next_match_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
-    }
-
-    for round_idx in 1..(match_ids.len() - 1) {
+    for round_idx in 0..(match_ids.len() - 1) {
         for (match_idx, match_id) in match_ids[round_idx].iter().enumerate() {
             let next_match_idx = match_idx / 2;
             if next_match_idx < match_ids[round_idx + 1].len() {
@@ -715,15 +724,44 @@ fn create_consolante_matches(
         }
     }
 
-    // Handle BYE if odd number
-    if has_bye && match_ids.len() > 1 {
-        let bye_team = shuffled[num_teams - 1];
-        let round_2_first_match = &match_ids[1][0];
-        conn.execute(
-            "UPDATE bracket_matches SET team1_id = ?2 WHERE id = ?1",
-            params![round_2_first_match, bye_team],
-        )
-        .map_err(|e| e.to_string())?;
+    // Auto-advance BYE matches (score 13-7)
+    for match_idx in 0..num_byes {
+        let match_id = &match_ids[0][match_idx];
+
+        let team1_id: Option<String> = conn
+            .query_row(
+                "SELECT team1_id FROM bracket_matches WHERE id = ?1",
+                params![match_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if let Some(winner) = &team1_id {
+            conn.execute(
+                "UPDATE bracket_matches SET winner_id = ?2, team1_score = 13, team2_score = 7 WHERE id = ?1",
+                params![match_id, winner],
+            )
+            .map_err(|e| e.to_string())?;
+
+            if match_ids.len() > 1 {
+                let next_match_idx = match_idx / 2;
+                let next_match_id = &match_ids[1][next_match_idx];
+                let is_top_half = match_idx % 2 == 0;
+                if is_top_half {
+                    conn.execute(
+                        "UPDATE bracket_matches SET team1_id = ?2 WHERE id = ?1",
+                        params![next_match_id, winner],
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    conn.execute(
+                        "UPDATE bracket_matches SET team2_id = ?2 WHERE id = ?1",
+                        params![next_match_id, winner],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+        }
     }
 
     Ok(())

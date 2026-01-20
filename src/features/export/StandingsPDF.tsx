@@ -1,5 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, TeamStanding } from '../../types';
+import { formatTeamName } from '../../lib/utils';
 
 const styles = StyleSheet.create({
   page: {
@@ -72,7 +73,7 @@ interface StandingsPDFProps {
 export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps) {
   const getTeamName = (teamId: string) => {
     const team = teams.find((t) => t.id === teamId);
-    return team?.captain || 'Unknown';
+    return formatTeamName(team?.captain);
   };
 
   const formatDate = (dateString: string) => {
