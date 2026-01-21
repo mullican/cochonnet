@@ -1,7 +1,7 @@
 [package]
 name = "petanque-tournament"
 version = "0.1.0"
-description = "Petanque Tournament Management Application"
+description = "Pétanque Tournament Management Application"
 authors = ["you"]
 edition = "2021"
 

@@ -30,7 +30,7 @@
     "tournaments": "Tournois",
     "teams": "Équipes",
     "qualifying": "Tours de Qualification",
-    "brackets": "Tableaux",
+    "brackets": "Éliminatoires",
     "export": "Exporter"
   },
   "tournaments": {
@@ -125,10 +125,10 @@
     "noRounds": "Pas encore de tours de qualification. Générez les appariements pour commencer."
   },
   "brackets": {
-    "title": "Tableaux",
+    "title": "Éliminatoires",
     "generate": "Générer les Tableaux",
     "regenerate": "Régénérer les Tableaux",
-    "main": "Tableau Principal",
+    "main": "Concours",
     "consolante": "Consolante",
     "winner": "Vainqueur",
     "final": "Finale",

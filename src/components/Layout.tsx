@@ -46,7 +46,7 @@ export function Layout() {
                 <line x1="3.95" y1="6.06" x2="8.54" y2="14" />
                 <line x1="10.88" y1="21.94" x2="15.46" y2="14" />
               </svg>
-              <span className="text-xl font-bold text-gray-900">Petanque</span>
+              <span className="text-xl font-bold text-gray-900">Pétanque</span>
             </Link>
             <nav className="hidden md:flex md:gap-4">
               {navItems.map((item) => (
@@ -70,7 +70,7 @@ export function Layout() {
               onValueChange={changeLanguage}
             >
               <SelectItem value="en">English</SelectItem>
-              <SelectItem value="fr">Francais</SelectItem>
+              <SelectItem value="fr">Français</SelectItem>
             </Select>
           </div>
         </div>

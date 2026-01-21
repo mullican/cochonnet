@@ -30,7 +30,7 @@
     "tournaments": "Tournaments",
     "teams": "Teams",
     "qualifying": "Qualifying Rounds",
-    "brackets": "Brackets",
+    "brackets": "Elimination Rounds",
     "export": "Export"
   },
   "tournaments": {
@@ -125,10 +125,10 @@
     "noRounds": "No qualifying rounds yet. Generate pairings to start the first round."
   },
   "brackets": {
-    "title": "Brackets",
+    "title": "Elimination Rounds",
     "generate": "Generate Brackets",
     "regenerate": "Regenerate Brackets",
-    "main": "Main Bracket",
+    "main": "Concours",
     "consolante": "Consolante",
     "winner": "Winner",
     "final": "Final",

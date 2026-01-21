@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Petanque Tournament",
+  "productName": "Pétanque Tournament",
   "version": "0.1.0",
   "identifier": "com.petanque.tournament",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Petanque Tournament Manager",
+        "title": "Pétanque Tournament Manager",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
