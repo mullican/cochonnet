@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { pdf } from '@react-pdf/renderer';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
+import { writeFile, remove, exists } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { useTournamentStore } from '../../stores/tournamentStore';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '../../components/ui';
@@ -29,6 +29,18 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
 
   const [error, setError] = useState<string | null>(null);
 
+  // Helper to write file, removing existing file first if needed
+  const writeFileOverwrite = async (path: string, data: Uint8Array) => {
+    try {
+      if (await exists(path)) {
+        await remove(path);
+      }
+    } catch {
+      // Ignore errors checking/removing - file might not exist
+    }
+    await writeFile(path, data);
+  };
+
   // Fetch all games for all rounds
   const fetchAllGames = async (): Promise<QualifyingGame[]> => {
     const allGames: QualifyingGame[] = [];
@@ -53,7 +65,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       });
 
       if (filePath) {
-        await writeFile(filePath, uint8Array);
+        await writeFileOverwrite(filePath, uint8Array);
       }
     } catch (err) {
       console.error('Failed to export PDF:', err);
@@ -91,7 +103,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       });
 
       if (filePath) {
-        await writeFile(filePath, uint8Array);
+        await writeFileOverwrite(filePath, uint8Array);
       }
     } catch (err) {
       console.error('Failed to export PDF:', err);
@@ -158,7 +170,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       });
 
       if (filePath) {
-        await writeFile(filePath, uint8Array);
+        await writeFileOverwrite(filePath, uint8Array);
       }
     } catch (err) {
       console.error('Failed to export backup:', err);
