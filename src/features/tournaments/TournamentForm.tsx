@@ -49,8 +49,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
     name: 'additionalUmpires',
   });
 
-  const advanceAll = watch('advanceAll');
-
   const validateRequired = (value: string) => {
     if (!value || value.trim() === '') {
       return t('validation.required');
@@ -251,19 +249,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                 {t('tournaments.advanceAll')}
               </label>
             </div>
-
-            {!advanceAll && (
-              <Select
-                label={t('tournaments.advanceCount')}
-                value={String(watch('advanceCount') || 16)}
-                onValueChange={(v) => setValue('advanceCount', parseInt(v))}
-              >
-                <SelectItem value="4">4</SelectItem>
-                <SelectItem value="8">8</SelectItem>
-                <SelectItem value="16">16</SelectItem>
-                <SelectItem value="32">32</SelectItem>
-              </Select>
-            )}
 
             <Select
               label={t('tournaments.bracketSize')}
