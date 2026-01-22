@@ -3,52 +3,50 @@ import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
 import { formatTeamName } from '../../lib/utils';
 
 // Compact dimensions for fitting 16-team bracket on one page
-const MATCH_WIDTH = 120;
-const MATCH_HEIGHT = 28;
-const ROUND_GAP = 30;
-const VERTICAL_GAP = 4;
+const MATCH_WIDTH = 110;
+const MATCH_HEIGHT = 24;
+const ROUND_GAP = 25;
+const LINE_LENGTH = 12; // Horizontal line from match to vertical
 
 const styles = StyleSheet.create({
   page: {
-    padding: 20,
+    padding: 15,
     fontSize: 8,
     fontFamily: 'Helvetica',
   },
   header: {
-    marginBottom: 10,
+    marginBottom: 8,
   },
   title: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   subtitle: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#666',
   },
   bracketContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
   },
   roundColumn: {
-    width: MATCH_WIDTH + ROUND_GAP,
-    alignItems: 'flex-start',
+    flexDirection: 'column',
   },
   roundLabel: {
-    fontSize: 8,
+    fontSize: 7,
     fontWeight: 'bold',
     color: '#666',
     textAlign: 'center',
     width: MATCH_WIDTH,
-    marginBottom: 6,
+    marginBottom: 4,
+    height: 10,
   },
-  matchWrapper: {
+  matchRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   match: {
     width: MATCH_WIDTH,
-    height: MATCH_HEIGHT,
     borderWidth: 1,
     borderColor: '#999',
     backgroundColor: '#fff',
@@ -56,8 +54,8 @@ const styles = StyleSheet.create({
   matchTeam: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
     height: MATCH_HEIGHT / 2,
     borderBottomWidth: 0.5,
     borderBottomColor: '#ddd',
@@ -69,12 +67,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#e8f5e9',
   },
   teamName: {
-    fontSize: 7,
+    fontSize: 6,
     flex: 1,
   },
   score: {
-    fontSize: 7,
-    width: 16,
+    fontSize: 6,
+    width: 14,
     textAlign: 'right',
     fontWeight: 'bold',
   },
@@ -86,36 +84,44 @@ const styles = StyleSheet.create({
     color: '#888',
     fontStyle: 'italic',
   },
-  connector: {
+  lineContainer: {
     width: ROUND_GAP,
-    flexDirection: 'column',
-    justifyContent: 'center',
+    position: 'relative',
   },
-  lineHorizontal: {
+  hLine: {
+    position: 'absolute',
     height: 0.5,
     backgroundColor: '#999',
+    left: 0,
+    width: LINE_LENGTH,
   },
-  lineVertical: {
+  vLine: {
+    position: 'absolute',
     width: 0.5,
     backgroundColor: '#999',
+    left: LINE_LENGTH,
   },
-  winnerColumn: {
-    width: MATCH_WIDTH,
+  hLineToNext: {
+    position: 'absolute',
+    height: 0.5,
+    backgroundColor: '#999',
+    left: LINE_LENGTH,
+    width: ROUND_GAP - LINE_LENGTH,
   },
   winnerBox: {
     width: MATCH_WIDTH,
-    padding: 6,
+    padding: 4,
     backgroundColor: '#e3f2fd',
     borderWidth: 1,
     borderColor: '#1976d2',
   },
   winnerLabel: {
-    fontSize: 7,
+    fontSize: 6,
     color: '#666',
-    marginBottom: 2,
+    marginBottom: 1,
   },
   winnerName: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: 'bold',
     color: '#1565c0',
   },
@@ -201,9 +207,13 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
       {brackets.map((bracket) => {
         const bracketMatches = getMatchesForBracket(bracket.id);
         const numRounds = Math.log2(bracket.size);
+        const firstRoundMatchCount = bracket.size / 2;
 
-        // Calculate spacing for each round
-        const baseMatchHeight = MATCH_HEIGHT + VERTICAL_GAP;
+        // Calculate vertical spacing - total height available for matches
+        // A4 landscape: 842 x 595, with padding we have about 812 x 565
+        // Reserve ~25 for header, leaves ~540 for bracket
+        const availableHeight = 520;
+        const matchSpacingRound1 = availableHeight / firstRoundMatchCount;
 
         const finalMatch = bracketMatches.find(
           (m) => m.roundNumber === numRounds && m.winnerId
@@ -226,62 +236,70 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
                   .sort((a, b) => a.matchNumber - b.matchNumber);
 
                 const spacingMultiplier = Math.pow(2, roundIdx);
-                const matchSpacing = baseMatchHeight * spacingMultiplier;
-                const topPadding = (matchSpacing - baseMatchHeight) / 2;
+                const matchSpacing = matchSpacingRound1 * spacingMultiplier;
+                // Center the match vertically within its spacing slot
+                const verticalPadding = (matchSpacing - MATCH_HEIGHT) / 2;
 
                 return (
                   <View key={roundNumber} style={styles.roundColumn}>
                     <Text style={styles.roundLabel}>
                       {getRoundName(roundNumber, numRounds)}
                     </Text>
-                    <View style={{ paddingTop: topPadding }}>
-                      {roundMatches.map((match, idx) => (
-                        <View
-                          key={match.id}
-                          style={{
-                            height: matchSpacing,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                          }}
-                        >
-                          {renderMatch(match)}
-                          {roundNumber < numRounds && (
-                            <View style={{ width: ROUND_GAP, height: matchSpacing }}>
-                              <View style={{ flex: 1, flexDirection: 'row' }}>
-                                <View style={{ flex: 1 }} />
-                                <View style={{ width: ROUND_GAP / 2 }}>
-                                  <View style={[styles.lineHorizontal, { marginTop: matchSpacing / 2 - 0.25 }]} />
-                                  {idx % 2 === 0 ? (
-                                    <View style={[styles.lineVertical, { height: matchSpacing / 2, marginLeft: ROUND_GAP / 2 - 0.5 }]} />
+                    <View>
+                      {roundMatches.map((match, idx) => {
+                        const isLastRound = roundNumber === numRounds;
+                        const showLines = !isLastRound;
+                        const isTopOfPair = idx % 2 === 0;
+                        const lineHeight = matchSpacing / 2;
+
+                        return (
+                          <View key={match.id} style={{ height: matchSpacing }}>
+                            <View style={[styles.matchRow, { marginTop: verticalPadding }]}>
+                              {renderMatch(match)}
+                              {showLines && (
+                                <View style={[styles.lineContainer, { height: MATCH_HEIGHT }]}>
+                                  {/* Horizontal line from this match */}
+                                  <View style={[styles.hLine, { top: MATCH_HEIGHT / 2 }]} />
+                                  {/* Vertical line segment */}
+                                  {isTopOfPair ? (
+                                    <View style={[styles.vLine, { top: MATCH_HEIGHT / 2, height: lineHeight }]} />
                                   ) : (
-                                    <View style={[styles.lineVertical, { height: matchSpacing / 2, marginLeft: ROUND_GAP / 2 - 0.5, marginTop: -matchSpacing / 2 }]} />
+                                    <View style={[styles.vLine, { top: MATCH_HEIGHT / 2 - lineHeight, height: lineHeight }]} />
+                                  )}
+                                  {/* Horizontal line to next match (only on bottom of pair) */}
+                                  {!isTopOfPair && (
+                                    <View style={[styles.hLineToNext, { top: MATCH_HEIGHT / 2 - lineHeight }]} />
                                   )}
                                 </View>
-                              </View>
+                              )}
                             </View>
-                          )}
-                        </View>
-                      ))}
+                          </View>
+                        );
+                      })}
                     </View>
                   </View>
                 );
               })}
 
               {/* Winner column */}
-              <View style={styles.winnerColumn}>
+              <View style={styles.roundColumn}>
                 <Text style={styles.roundLabel}>Winner</Text>
-                <View style={{ paddingTop: (baseMatchHeight * Math.pow(2, numRounds - 1) - baseMatchHeight) / 2 }}>
-                  {finalMatch ? (
-                    <View style={styles.winnerBox}>
-                      <Text style={styles.winnerLabel}>Champion</Text>
-                      <Text style={styles.winnerName}>{getTeamName(finalMatch.winnerId)}</Text>
+                <View>
+                  <View style={{ height: matchSpacingRound1 * Math.pow(2, numRounds - 1) }}>
+                    <View style={{ marginTop: (matchSpacingRound1 * Math.pow(2, numRounds - 1) - MATCH_HEIGHT) / 2 }}>
+                      {finalMatch ? (
+                        <View style={styles.winnerBox}>
+                          <Text style={styles.winnerLabel}>Champion</Text>
+                          <Text style={styles.winnerName}>{getTeamName(finalMatch.winnerId)}</Text>
+                        </View>
+                      ) : (
+                        <View style={[styles.winnerBox, { backgroundColor: '#f5f5f5', borderColor: '#ccc' }]}>
+                          <Text style={styles.winnerLabel}>Champion</Text>
+                          <Text style={[styles.winnerName, { color: '#999' }]}>TBD</Text>
+                        </View>
+                      )}
                     </View>
-                  ) : (
-                    <View style={[styles.winnerBox, { backgroundColor: '#f5f5f5', borderColor: '#ccc' }]}>
-                      <Text style={styles.winnerLabel}>Champion</Text>
-                      <Text style={[styles.winnerName, { color: '#999' }]}>TBD</Text>
-                    </View>
-                  )}
+                  </View>
                 </View>
               </View>
             </View>
