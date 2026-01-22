@@ -23,7 +23,7 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     qualifyingRounds,
     loading,
     fetchQualifyingRounds,
-    generatePairings,
+    generateAllQualifyingRounds,
     fetchStandings,
     teams,
   } = useTournamentStore();
@@ -44,26 +44,30 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
 
   const handleGeneratePairings = async () => {
     try {
-      const round = await generatePairings(tournamentId);
-      setSelectedRoundId(round.id);
+      const rounds = await generateAllQualifyingRounds(tournamentId);
+      if (rounds.length > 0) {
+        setSelectedRoundId(rounds[0].id);
+      }
     } catch (error) {
       console.error('Failed to generate pairings:', error);
     }
   };
 
   const canGeneratePairings = teams.length >= 2;
-  const hasIncompleteRound = qualifyingRounds.some((r) => !r.isComplete);
+  const hasRounds = qualifyingRounds.length > 0;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">{t('pairing.title')}</h2>
-        <Button
-          onClick={handleGeneratePairings}
-          disabled={!canGeneratePairings || hasIncompleteRound || loading}
-        >
-          {hasIncompleteRound ? t('pairing.completeRound') : t('pairing.generatePairings')}
-        </Button>
+        {!hasRounds && (
+          <Button
+            onClick={handleGeneratePairings}
+            disabled={!canGeneratePairings || loading}
+          >
+            {t('pairing.generatePairings')}
+          </Button>
+        )}
       </div>
 
       {!canGeneratePairings && (

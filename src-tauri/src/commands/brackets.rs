@@ -176,9 +176,9 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Get tournament settings
-    let (advance_all, advance_count, bracket_size, number_of_courts): (bool, Option<i32>, i32, i32) =
+    let (advance_all, advance_count, bracket_size, number_of_courts, has_consolante): (bool, Option<i32>, i32, i32, bool) =
         conn.query_row(
-            "SELECT advance_all, advance_count, bracket_size, number_of_courts FROM tournaments WHERE id = ?1",
+            "SELECT advance_all, advance_count, bracket_size, number_of_courts, has_consolante FROM tournaments WHERE id = ?1",
             params![tournament_id],
             |row| {
                 Ok((
@@ -186,6 +186,7 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
                     row.get(1)?,
                     row.get(2)?,
                     row.get(3)?,
+                    row.get::<_, i32>(4)? != 0,
                 ))
             },
         )
@@ -225,6 +226,54 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
         return Err("No teams to create brackets for".to_string());
     }
 
+    let now = Utc::now().to_rfc3339();
+
+    // Check if we should use the simultaneous bracket formation (FPUSA standard)
+    // This happens when: advance_all = false AND has_consolante = true
+    if !advance_all && has_consolante {
+        // FPUSA standard format: Create Concours and Consolante brackets simultaneously
+        // Top bracket_size teams go to Concours, next teams go to Consolante
+        let concours_teams: Vec<&Team> = teams.iter().take(bracket_size as usize).collect();
+        let consolante_teams: Vec<&Team> = teams.iter().skip(bracket_size as usize).take(bracket_size as usize).collect();
+
+        if concours_teams.len() < 2 {
+            return Err("Not enough teams for Concours bracket".to_string());
+        }
+
+        // Create Concours bracket
+        let concours_id = Uuid::new_v4().to_string();
+        let concours_power_of_2 = (concours_teams.len() as f64).log2().ceil().exp2() as i32;
+        conn.execute(
+            r#"
+            INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
+            VALUES (?1, ?2, 'A', 0, ?3, 0, ?4)
+            "#,
+            params![concours_id, tournament_id, concours_power_of_2, now],
+        )
+        .map_err(|e| e.to_string())?;
+
+        create_bracket_matches(&conn, &concours_id, &concours_teams, number_of_courts)?;
+
+        // Create Consolante bracket if there are enough teams
+        if consolante_teams.len() >= 2 {
+            let consolante_id = Uuid::new_v4().to_string();
+            let consolante_power_of_2 = (consolante_teams.len() as f64).log2().ceil().exp2() as i32;
+            conn.execute(
+                r#"
+                INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
+                VALUES (?1, ?2, 'AA', 1, ?3, 0, ?4)
+                "#,
+                params![consolante_id, tournament_id, consolante_power_of_2, now],
+            )
+            .map_err(|e| e.to_string())?;
+
+            create_bracket_matches(&conn, &consolante_id, &consolante_teams, number_of_courts)?;
+        }
+
+        return Ok(());
+    }
+
+    // Original behavior: advance_all or no consolante
     // Determine how many teams advance
     let advancing_count = if advance_all {
         teams.len()
@@ -238,7 +287,6 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
     let bracket_names = ["A", "B", "C", "D", "E", "F", "G", "H"];
     let mut bracket_idx = 0;
     let mut start_idx = 0;
-    let now = Utc::now().to_rfc3339();
 
     while start_idx < advancing_teams.len() {
         let end_idx = std::cmp::min(start_idx + bracket_size as usize, advancing_teams.len());
@@ -539,16 +587,22 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
         return Ok(());
     }
 
-    // Check if tournament has consolante enabled and get number of courts
-    let (has_consolante, number_of_courts): (bool, i32) = conn
+    // Check if tournament has consolante enabled and get advance_all setting
+    let (has_consolante, number_of_courts, advance_all): (bool, i32, bool) = conn
         .query_row(
-            "SELECT has_consolante, number_of_courts FROM tournaments WHERE id = ?1",
+            "SELECT has_consolante, number_of_courts, advance_all FROM tournaments WHERE id = ?1",
             params![tournament_id],
-            |row| Ok((row.get::<_, i32>(0)? != 0, row.get(1)?)),
+            |row| Ok((row.get::<_, i32>(0)? != 0, row.get(1)?, row.get::<_, i32>(2)? != 0)),
         )
         .map_err(|e| e.to_string())?;
 
     if !has_consolante {
+        return Ok(());
+    }
+
+    // Only create consolante from first-round losers when advance_all is true
+    // When advance_all is false, consolante was created simultaneously at bracket generation
+    if !advance_all {
         return Ok(());
     }
 

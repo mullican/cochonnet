@@ -116,7 +116,52 @@ pub fn generate_pairings(
     tournament_id: String,
 ) -> Result<QualifyingRound, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    generate_single_round(&conn, &tournament_id)
+}
 
+#[tauri::command]
+pub fn generate_all_qualifying_rounds(
+    db: State<Database>,
+    tournament_id: String,
+) -> Result<Vec<QualifyingRound>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Get the number of qualifying rounds from tournament settings
+    let number_of_qualifying_rounds: i32 = conn
+        .query_row(
+            "SELECT number_of_qualifying_rounds FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Get current round number
+    let current_round: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(round_number), 0) FROM qualifying_rounds WHERE tournament_id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Generate all remaining rounds
+    let mut rounds = Vec::new();
+    for _ in current_round..number_of_qualifying_rounds {
+        let round = generate_single_round(&conn, &tournament_id)?;
+        rounds.push(round);
+    }
+
+    if rounds.is_empty() {
+        return Err("All qualifying rounds have already been generated".to_string());
+    }
+
+    Ok(rounds)
+}
+
+fn generate_single_round(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+) -> Result<QualifyingRound, String> {
     // Get tournament info
     let (pairing_method, number_of_courts, region_avoidance): (String, i32, bool) = conn
         .query_row(
@@ -209,6 +254,7 @@ pub fn generate_pairings(
     };
 
     // Get standings for Swiss pairing
+    let tournament_id_owned = tournament_id.to_string();
     let mut standings_stmt = conn
         .prepare(
             r#"
@@ -224,7 +270,7 @@ pub fn generate_pairings(
         .query_map(params![tournament_id], |row| {
             Ok(TeamStanding {
                 id: String::new(),
-                tournament_id: tournament_id.clone(),
+                tournament_id: tournament_id_owned.clone(),
                 team_id: row.get(0)?,
                 wins: row.get(1)?,
                 losses: row.get(2)?,
@@ -316,7 +362,7 @@ pub fn generate_pairings(
 
     Ok(QualifyingRound {
         id: round_id,
-        tournament_id,
+        tournament_id: tournament_id.to_string(),
         round_number: new_round_number,
         is_complete: false,
         created_at: now,

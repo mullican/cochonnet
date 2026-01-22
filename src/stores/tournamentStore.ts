@@ -32,6 +32,7 @@ interface TournamentState {
   // Qualifying round actions
   fetchQualifyingRounds: (tournamentId: string) => Promise<void>;
   generatePairings: (tournamentId: string) => Promise<QualifyingRound>;
+  generateAllQualifyingRounds: (tournamentId: string) => Promise<QualifyingRound[]>;
   fetchGamesForRound: (roundId: string) => Promise<void>;
   updateGameScore: (gameId: string, team1Score: number, team2Score: number) => Promise<void>;
   completeRound: (roundId: string) => Promise<void>;
@@ -228,6 +229,23 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
         loading: false,
       }));
       return round;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  generateAllQualifyingRounds: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const rounds = await invoke<QualifyingRound[]>('generate_all_qualifying_rounds', {
+        tournamentId,
+      });
+      set((state) => ({
+        qualifyingRounds: [...state.qualifyingRounds, ...rounds],
+        loading: false,
+      }));
+      return rounds;
     } catch (error) {
       set({ error: String(error), loading: false });
       throw error;
