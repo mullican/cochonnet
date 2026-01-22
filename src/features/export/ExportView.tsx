@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { pdf } from '@react-pdf/renderer';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
 import { useTournamentStore } from '../../stores/tournamentStore';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '../../components/ui';
 import { ScoreSheetPDF } from './ScoreSheetPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
+import type { QualifyingGame } from '../../types';
 
 interface ExportViewProps {
   tournamentId: string;
@@ -20,13 +22,22 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     currentTournament,
     teams,
     qualifyingRounds,
-    qualifyingGames,
     standings,
     brackets,
     bracketMatches,
   } = useTournamentStore();
 
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch all games for all rounds
+  const fetchAllGames = async (): Promise<QualifyingGame[]> => {
+    const allGames: QualifyingGame[] = [];
+    for (const round of qualifyingRounds) {
+      const games = await invoke<QualifyingGame[]>('get_games_for_round', { roundId: round.id });
+      allGames.push(...games);
+    }
+    return allGames;
+  };
 
   const downloadPDF = async (pdfDocument: Parameters<typeof pdf>[0], defaultFilename: string) => {
     setExporting(true);
@@ -55,15 +66,39 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   const handleExportScoreSheets = async () => {
     if (!currentTournament) return;
 
-    const doc = (
-      <ScoreSheetPDF
-        tournament={currentTournament}
-        teams={teams}
-        rounds={qualifyingRounds}
-        games={qualifyingGames}
-      />
-    );
-    await downloadPDF(doc, `${currentTournament.name}_score_sheets.pdf`);
+    setExporting(true);
+    setError(null);
+    try {
+      // Fetch all games for all rounds
+      const allGames = await fetchAllGames();
+
+      const doc = (
+        <ScoreSheetPDF
+          tournament={currentTournament}
+          teams={teams}
+          rounds={qualifyingRounds}
+          games={allGames}
+        />
+      );
+
+      const blob = await pdf(doc).toBlob();
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+
+      const filePath = await save({
+        defaultPath: `${currentTournament.name}_score_sheets.pdf`,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+
+      if (filePath) {
+        await writeFile(filePath, uint8Array);
+      }
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleExportStandings = async () => {
@@ -99,11 +134,14 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     setExporting(true);
     setError(null);
     try {
+      // Fetch all games for backup
+      const allGames = await fetchAllGames();
+
       const backup = {
         tournament: currentTournament,
         teams,
         qualifyingRounds,
-        qualifyingGames,
+        qualifyingGames: allGames,
         standings,
         brackets,
         bracketMatches,
