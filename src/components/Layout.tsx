@@ -33,26 +33,27 @@ export function Layout() {
                 width="32"
                 height="32"
                 viewBox="0 0 64 64"
-                className="text-primary-600"
               >
-                {/* Boule base with gradient */}
+                {/* Steel boule with metallic gradient */}
                 <defs>
-                  <linearGradient id="bouleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#6366f1" />
-                    <stop offset="50%" stopColor="#4f46e5" />
-                    <stop offset="100%" stopColor="#3730a3" />
+                  <linearGradient id="steelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#e5e7eb" />
+                    <stop offset="25%" stopColor="#9ca3af" />
+                    <stop offset="50%" stopColor="#6b7280" />
+                    <stop offset="75%" stopColor="#9ca3af" />
+                    <stop offset="100%" stopColor="#4b5563" />
                   </linearGradient>
                   <linearGradient id="shineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="white" stopOpacity="0.4" />
+                    <stop offset="0%" stopColor="white" stopOpacity="0.6" />
                     <stop offset="100%" stopColor="white" stopOpacity="0" />
                   </linearGradient>
                 </defs>
                 {/* Main sphere */}
-                <circle cx="32" cy="32" r="28" fill="url(#bouleGradient)" />
+                <circle cx="32" cy="32" r="28" fill="url(#steelGradient)" />
                 {/* Grooves */}
-                <path d="M8 26 Q32 22 56 26" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
-                <path d="M6 34 Q32 30 58 34" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
-                <path d="M8 42 Q32 38 56 42" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
+                <path d="M8 26 Q32 22 56 26" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
+                <path d="M6 34 Q32 30 58 34" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
+                <path d="M8 42 Q32 38 56 42" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
                 {/* Highlight shine */}
                 <ellipse cx="22" cy="20" rx="10" ry="6" fill="url(#shineGradient)" />
               </svg>
