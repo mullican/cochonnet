@@ -20,7 +20,6 @@ export function TournamentCreate() {
         director: data.director,
         headUmpire: data.headUmpire,
         format: data.format,
-        dayType: data.dayType,
         numberOfCourts: data.numberOfCourts,
         numberOfQualifyingRounds: data.numberOfQualifyingRounds,
         hasConsolante: data.hasConsolante,

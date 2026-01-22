@@ -31,7 +31,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
       headUmpire: '',
       additionalUmpires: [],
       format: 'triple',
-      dayType: 'single',
       numberOfCourts: 8,
       numberOfQualifyingRounds: 5,
       hasConsolante: false,
@@ -76,6 +75,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
             >
               <SelectItem value="regional">{t('tournaments.typeOptions.regional')}</SelectItem>
               <SelectItem value="national">{t('tournaments.typeOptions.national')}</SelectItem>
+              <SelectItem value="open">{t('tournaments.typeOptions.open')}</SelectItem>
               <SelectItem value="club">{t('tournaments.typeOptions.club')}</SelectItem>
             </Select>
 
@@ -113,15 +113,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               {...register('endDate', { validate: validateRequired })}
               error={errors.endDate?.message}
             />
-
-            <Select
-              label={t('tournaments.dayType')}
-              value={watch('dayType')}
-              onValueChange={(v) => setValue('dayType', v as TournamentFormData['dayType'])}
-            >
-              <SelectItem value="single">{t('tournaments.dayTypeOptions.single')}</SelectItem>
-              <SelectItem value="two">{t('tournaments.dayTypeOptions.two')}</SelectItem>
-            </Select>
 
             <Input
               type="number"

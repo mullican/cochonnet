@@ -51,6 +51,7 @@
     "typeOptions": {
       "regional": "Régional",
       "national": "National",
+      "open": "Open",
       "club": "Club"
     },
     "startDate": "Date de Début",
@@ -64,18 +65,13 @@
       "double": "Double",
       "Triple": "Triple"
     },
-    "dayType": "Durée",
-    "dayTypeOptions": {
-      "single": "Un Jour",
-      "two": "Deux Jours"
-    },
     "numberOfCourts": "Nombre de Terrains",
     "consolante": "Tableau Consolante",
     "advanceAll": "Toutes les Équipes Avancent",
     "advanceTop": "Meilleures Équipes Avancent",
     "advanceCount": "Nombre d'Équipes qui Avancent",
     "bracketSize": "Taille du Tableau",
-    "pairingMethod": "Méthode d'Appariement",
+    "pairingMethod": "Format de Qualification",
     "pairingMethodOptions": {
       "swiss": "Système Suisse",
       "roundRobin": "Toutes Rondes"

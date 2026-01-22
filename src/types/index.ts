@@ -1,7 +1,6 @@
 export type TeamComposition = 'men' | 'women' | 'mixed' | 'select';
-export type TournamentType = 'regional' | 'national' | 'club';
+export type TournamentType = 'regional' | 'national' | 'open' | 'club';
 export type TournamentFormat = 'single' | 'double' | 'triple';
-export type DayType = 'single' | 'two';
 export type PairingMethod = 'swiss' | 'roundRobin';
 export type BracketSize = 4 | 8 | 16 | 32;
 
@@ -15,7 +14,6 @@ export interface Tournament {
   director: string;
   headUmpire: string;
   format: TournamentFormat;
-  dayType: DayType;
   numberOfCourts: number;
   numberOfQualifyingRounds: number;
   hasConsolante: boolean;
@@ -129,7 +127,6 @@ export interface TournamentFormData {
   headUmpire: string;
   additionalUmpires: { value: string }[];
   format: TournamentFormat;
-  dayType: DayType;
   numberOfCourts: number;
   numberOfQualifyingRounds: number;
   hasConsolante: boolean;

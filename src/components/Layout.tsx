@@ -1,25 +1,13 @@
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Select, SelectItem } from './ui';
 
 export function Layout() {
-  const { t, i18n } = useTranslation();
-  const location = useLocation();
-
-  const navItems = [
-    { path: '/', label: t('nav.tournaments') },
-  ];
+  const { i18n } = useTranslation();
 
   const changeLanguage = (lang: string) => {
     i18n.changeLanguage(lang);
     localStorage.setItem('language', lang);
-  };
-
-  const isActive = (path: string) => {
-    if (path === '/') {
-      return location.pathname === '/';
-    }
-    return location.pathname.startsWith(path);
   };
 
   return (
@@ -59,21 +47,6 @@ export function Layout() {
               </svg>
               <span className="text-xl font-bold text-gray-900">Pétanque</span>
             </Link>
-            <nav className="hidden md:flex md:gap-4">
-              {navItems.map((item) => (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`px-3 py-2 text-sm font-medium transition-colors ${
-                    isActive(item.path)
-                      ? 'text-primary-600'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
           </div>
           <div className="flex items-center gap-4">
             <Select
