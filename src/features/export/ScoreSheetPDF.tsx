@@ -2,67 +2,108 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, QualifyingRound, QualifyingGame } from '../../types';
 import { formatTeamName } from '../../lib/utils';
 
+// Card dimensions - 3 columns x 4 rows = 12 cards per page
+const CARD_WIDTH = 180;
+const CARD_HEIGHT = 180;
+const CARD_MARGIN = 8;
+const CARDS_PER_ROW = 3;
+const CARDS_PER_COL = 4;
+const CARDS_PER_PAGE = CARDS_PER_ROW * CARDS_PER_COL;
+
 const styles = StyleSheet.create({
   page: {
-    padding: 30,
+    padding: 15,
     fontSize: 10,
     fontFamily: 'Helvetica',
   },
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: '#666',
-  },
-  roundHeader: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
-    backgroundColor: '#f0f0f0',
-    padding: 8,
-  },
-  table: {
-    width: '100%',
-    marginBottom: 20,
-  },
-  tableHeader: {
+  cardGrid: {
     flexDirection: 'row',
-    backgroundColor: '#e0e0e0',
-    borderBottomWidth: 1,
-    borderBottomColor: '#000',
-    paddingVertical: 5,
-    paddingHorizontal: 3,
+    flexWrap: 'wrap',
   },
-  tableRow: {
+  card: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    margin: CARD_MARGIN,
+    borderWidth: 1,
+    borderColor: '#000',
+    borderStyle: 'dashed',
+    padding: 10,
+    flexDirection: 'column',
+  },
+  cardHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
-    paddingVertical: 8,
-    paddingHorizontal: 3,
+    paddingBottom: 6,
+    marginBottom: 8,
   },
-  courtCol: {
-    width: '10%',
-  },
-  teamCol: {
-    width: '35%',
-  },
-  scoreCol: {
-    width: '10%',
-    textAlign: 'center',
-  },
-  bold: {
+  roundBadge: {
+    backgroundColor: '#1976d2',
+    color: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 3,
+    fontSize: 9,
     fontWeight: 'bold',
+  },
+  courtBadge: {
+    backgroundColor: '#666',
+    color: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 3,
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  teamSection: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  teamRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 6,
+  },
+  teamName: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  scoreBox: {
+    width: 40,
+    height: 32,
+    borderWidth: 2,
+    borderColor: '#000',
+    backgroundColor: '#fafafa',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scoreText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  vsText: {
+    textAlign: 'center',
+    fontSize: 9,
+    color: '#666',
+    marginVertical: 4,
+  },
+  byeCard: {
+    backgroundColor: '#f5f5f5',
   },
   byeText: {
     color: '#888',
     fontStyle: 'italic',
+  },
+  tournamentName: {
+    fontSize: 8,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 'auto',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
   },
 });
 
@@ -80,64 +121,70 @@ export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPD
     return formatTeamName(team?.captain);
   };
 
-  const getGamesForRound = (roundId: string) => {
-    return games.filter((g) => g.roundId === roundId).sort((a, b) => a.courtNumber - b.courtNumber);
-  };
+  // Build list of all game cards (excluding BYE games)
+  const gameCards: { round: QualifyingRound; game: QualifyingGame }[] = [];
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
-  };
+  rounds.forEach((round) => {
+    const roundGames = games
+      .filter((g) => g.roundId === round.id && !g.isBye)
+      .sort((a, b) => a.courtNumber - b.courtNumber);
+
+    roundGames.forEach((game) => {
+      gameCards.push({ round, game });
+    });
+  });
+
+  // Split into pages
+  const pages: { round: QualifyingRound; game: QualifyingGame }[][] = [];
+  for (let i = 0; i < gameCards.length; i += CARDS_PER_PAGE) {
+    pages.push(gameCards.slice(i, i + CARDS_PER_PAGE));
+  }
+
+  // If no games, show empty page
+  if (pages.length === 0) {
+    pages.push([]);
+  }
 
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
-        <View style={styles.header}>
-          <Text style={styles.title}>{tournament.name}</Text>
-          <Text style={styles.subtitle}>
-            {formatDate(tournament.startDate)} | {tournament.director} | Courts: {tournament.numberOfCourts}
-          </Text>
-        </View>
-
-        {rounds.map((round) => {
-          const roundGames = getGamesForRound(round.id);
-
-          return (
-            <View key={round.id}>
-              <Text style={styles.roundHeader}>
-                Round {round.roundNumber} {round.isComplete ? '(Complete)' : ''}
-              </Text>
-
-              <View style={styles.table}>
-                <View style={styles.tableHeader}>
-                  <Text style={[styles.courtCol, styles.bold]}>Court</Text>
-                  <Text style={[styles.teamCol, styles.bold]}>Team 1</Text>
-                  <Text style={[styles.scoreCol, styles.bold]}>Score</Text>
-                  <Text style={[styles.scoreCol, styles.bold]}></Text>
-                  <Text style={[styles.scoreCol, styles.bold]}>Score</Text>
-                  <Text style={[styles.teamCol, styles.bold]}>Team 2</Text>
+      {pages.map((pageCards, pageIndex) => (
+        <Page key={pageIndex} size="A4" style={styles.page}>
+          <View style={styles.cardGrid}>
+            {pageCards.map(({ round, game }) => (
+              <View key={game.id} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.roundBadge}>Round {round.roundNumber}</Text>
+                  <Text style={styles.courtBadge}>Court {game.courtNumber}</Text>
                 </View>
 
-                {roundGames.map((game) => (
-                  <View key={game.id} style={styles.tableRow}>
-                    <Text style={styles.courtCol}>{game.courtNumber}</Text>
-                    <Text style={styles.teamCol}>{getTeamName(game.team1Id)}</Text>
-                    <Text style={styles.scoreCol}>
-                      {game.isBye ? '13' : game.team1Score !== null ? game.team1Score : '___'}
-                    </Text>
-                    <Text style={styles.scoreCol}>-</Text>
-                    <Text style={styles.scoreCol}>
-                      {game.isBye ? '7' : game.team2Score !== null ? game.team2Score : '___'}
-                    </Text>
-                    <Text style={[styles.teamCol, game.isBye ? styles.byeText : {}]}>
-                      {game.isBye ? 'BYE' : getTeamName(game.team2Id)}
-                    </Text>
+                <View style={styles.teamSection}>
+                  <View style={styles.teamRow}>
+                    <Text style={styles.teamName}>{getTeamName(game.team1Id)}</Text>
+                    <View style={styles.scoreBox}>
+                      <Text style={styles.scoreText}>
+                        {game.team1Score !== null ? game.team1Score : ''}
+                      </Text>
+                    </View>
                   </View>
-                ))}
+
+                  <Text style={styles.vsText}>vs</Text>
+
+                  <View style={styles.teamRow}>
+                    <Text style={styles.teamName}>{getTeamName(game.team2Id)}</Text>
+                    <View style={styles.scoreBox}>
+                      <Text style={styles.scoreText}>
+                        {game.team2Score !== null ? game.team2Score : ''}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <Text style={styles.tournamentName}>{tournament.name}</Text>
               </View>
-            </View>
-          );
-        })}
-      </Page>
+            ))}
+          </View>
+        </Page>
+      ))}
     </Document>
   );
 }
