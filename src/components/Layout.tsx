@@ -32,19 +32,29 @@ export function Layout() {
                 xmlns="http://www.w3.org/2000/svg"
                 width="32"
                 height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                viewBox="0 0 64 64"
                 className="text-primary-600"
               >
-                <circle cx="12" cy="12" r="10" />
-                <circle cx="12" cy="12" r="4" />
-                <line x1="21.17" y1="8" x2="12" y2="8" />
-                <line x1="3.95" y1="6.06" x2="8.54" y2="14" />
-                <line x1="10.88" y1="21.94" x2="15.46" y2="14" />
+                {/* Boule base with gradient */}
+                <defs>
+                  <linearGradient id="bouleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#6366f1" />
+                    <stop offset="50%" stopColor="#4f46e5" />
+                    <stop offset="100%" stopColor="#3730a3" />
+                  </linearGradient>
+                  <linearGradient id="shineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="white" stopOpacity="0.4" />
+                    <stop offset="100%" stopColor="white" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {/* Main sphere */}
+                <circle cx="32" cy="32" r="28" fill="url(#bouleGradient)" />
+                {/* Grooves */}
+                <path d="M8 26 Q32 22 56 26" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
+                <path d="M6 34 Q32 30 58 34" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
+                <path d="M8 42 Q32 38 56 42" fill="none" stroke="#312e81" strokeWidth="2" strokeLinecap="round" />
+                {/* Highlight shine */}
+                <ellipse cx="22" cy="20" rx="10" ry="6" fill="url(#shineGradient)" />
               </svg>
               <span className="text-xl font-bold text-gray-900">Pétanque</span>
             </Link>
