@@ -3,22 +3,24 @@ import type { Tournament, Team, QualifyingRound, QualifyingGame } from '../../ty
 import { formatTeamName } from '../../lib/utils';
 
 // Card dimensions - 3 columns x 4 rows = 12 cards per page
-const CARD_WIDTH = 180;
-const CARD_HEIGHT = 180;
-const CARD_MARGIN = 8;
+// A4 is 595 x 842 points, with padding we have ~565 x 812 usable
+const CARD_WIDTH = 175;
+const CARD_HEIGHT = 190;
+const CARD_MARGIN = 4;
 const CARDS_PER_ROW = 3;
 const CARDS_PER_COL = 4;
 const CARDS_PER_PAGE = CARDS_PER_ROW * CARDS_PER_COL;
 
 const styles = StyleSheet.create({
   page: {
-    padding: 15,
+    padding: 12,
     fontSize: 10,
     fontFamily: 'Helvetica',
   },
   cardGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'flex-start',
   },
   card: {
     width: CARD_WIDTH,
@@ -27,7 +29,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#000',
     borderStyle: 'dashed',
-    padding: 10,
+    padding: 8,
     flexDirection: 'column',
   },
   cardHeader: {
@@ -35,25 +37,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
-    paddingBottom: 6,
-    marginBottom: 8,
+    paddingBottom: 5,
+    marginBottom: 6,
   },
   roundBadge: {
     backgroundColor: '#1976d2',
     color: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 3,
-    fontSize: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 2,
+    fontSize: 8,
     fontWeight: 'bold',
   },
   courtBadge: {
     backgroundColor: '#666',
     color: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 3,
-    fontSize: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 2,
+    fontSize: 8,
     fontWeight: 'bold',
   },
   teamSection: {
@@ -63,16 +65,16 @@ const styles = StyleSheet.create({
   teamRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 6,
+    marginVertical: 4,
   },
   teamName: {
     flex: 1,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
   },
   scoreBox: {
-    width: 40,
-    height: 32,
+    width: 36,
+    height: 28,
     borderWidth: 2,
     borderColor: '#000',
     backgroundColor: '#fafafa',
@@ -80,28 +82,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scoreText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   vsText: {
     textAlign: 'center',
-    fontSize: 9,
+    fontSize: 8,
     color: '#666',
-    marginVertical: 4,
-  },
-  byeCard: {
-    backgroundColor: '#f5f5f5',
-  },
-  byeText: {
-    color: '#888',
-    fontStyle: 'italic',
+    marginVertical: 2,
   },
   tournamentName: {
-    fontSize: 8,
+    fontSize: 7,
     color: '#666',
     textAlign: 'center',
     marginTop: 'auto',
-    paddingTop: 6,
+    paddingTop: 4,
     borderTopWidth: 1,
     borderTopColor: '#eee',
   },
@@ -151,7 +146,7 @@ export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPD
         <Page key={pageIndex} size="A4" style={styles.page}>
           <View style={styles.cardGrid}>
             {pageCards.map(({ round, game }) => (
-              <View key={game.id} style={styles.card}>
+              <View key={game.id} style={styles.card} wrap={false}>
                 <View style={styles.cardHeader}>
                   <Text style={styles.roundBadge}>Round {round.roundNumber}</Text>
                   <Text style={styles.courtBadge}>Court {game.courtNumber}</Text>

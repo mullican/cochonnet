@@ -210,9 +210,10 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
         const firstRoundMatchCount = bracket.size / 2;
 
         // Calculate vertical spacing - total height available for matches
-        // A4 landscape: 842 x 595, with padding we have about 812 x 565
-        // Reserve ~25 for header, leaves ~540 for bracket
-        const availableHeight = 520;
+        // A4 landscape: 842 x 595, with padding (15) we have about 812 x 565
+        // Reserve ~35 for header + ~15 for round labels = ~50, leaves ~515 for bracket
+        // Use 500 to ensure no overflow
+        const availableHeight = 500;
         const matchSpacingRound1 = availableHeight / firstRoundMatchCount;
 
         const finalMatch = bracketMatches.find(
@@ -228,7 +229,7 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
               </Text>
             </View>
 
-            <View style={styles.bracketContainer}>
+            <View style={styles.bracketContainer} wrap={false}>
               {Array.from({ length: numRounds }, (_, roundIdx) => {
                 const roundNumber = roundIdx + 1;
                 const roundMatches = bracketMatches
