@@ -35,7 +35,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
       numberOfCourts: 8,
       numberOfQualifyingRounds: 5,
       hasConsolante: false,
-      advanceAll: true,
+      advanceAll: false,
       advanceCount: null,
       bracketSize: 16,
       pairingMethod: 'swiss',
