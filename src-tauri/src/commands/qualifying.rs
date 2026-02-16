@@ -135,9 +135,12 @@ pub fn generate_all_qualifying_rounds(
         )
         .map_err(|e| e.to_string())?;
 
-    // Swiss system requires round-by-round generation
+    // Swiss and Pool Play require round-by-round generation
     if pairing_method == "swiss" {
         return Err("Swiss system requires round-by-round generation. Use 'Generate Next Round' instead.".to_string());
+    }
+    if pairing_method == "poolPlay" {
+        return Err("Pool Play requires round-by-round generation. Use 'Generate Next Round' instead.".to_string());
     }
 
     // Get current round number
@@ -194,8 +197,8 @@ fn generate_single_round(
 
     let new_round_number = current_round + 1;
 
-    // Swiss system: verify prior round is complete before generating next
-    if pairing_method == "swiss" && current_round > 0 {
+    // Swiss and Pool Play: verify prior round is complete before generating next
+    if (pairing_method == "swiss" || pairing_method == "poolPlay") && current_round > 0 {
         let prior_round_complete: bool = conn
             .query_row(
                 "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
@@ -205,7 +208,7 @@ fn generate_single_round(
             .map_err(|e| e.to_string())?;
 
         if !prior_round_complete {
-            return Err("Previous round must be completed before generating the next round in Swiss system.".to_string());
+            return Err("Previous round must be completed before generating the next round.".to_string());
         }
     }
 

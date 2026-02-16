@@ -94,16 +94,19 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   );
   const canDeleteRounds = hasRounds && !hasScores;
 
-  // For Swiss system: can generate next round if prior round is complete
+  // For Swiss and Pool Play: can generate next round if prior round is complete
   const lastRound = qualifyingRounds[qualifyingRounds.length - 1];
-  const canGenerateNextRound = pairingMethod === 'swiss' &&
+  const maxRounds = pairingMethod === 'poolPlay' ? 3 : (currentTournament?.numberOfQualifyingRounds || 5);
+  const requiresRoundByRound = pairingMethod === 'swiss' || pairingMethod === 'poolPlay';
+
+  const canGenerateNextRound = requiresRoundByRound &&
     canGeneratePairings &&
     (!lastRound || lastRound.isComplete) &&
-    qualifyingRounds.length < (currentTournament?.numberOfQualifyingRounds || 5);
+    qualifyingRounds.length < maxRounds;
 
   // Determine which generate button to show
-  const showGenerateAllButton = !hasRounds && pairingMethod !== 'swiss';
-  const showGenerateNextButton = pairingMethod === 'swiss' && canGenerateNextRound;
+  const showGenerateAllButton = !hasRounds && !requiresRoundByRound;
+  const showGenerateNextButton = requiresRoundByRound && canGenerateNextRound;
 
   return (
     <div className="space-y-6">
