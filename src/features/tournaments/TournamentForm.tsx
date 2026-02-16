@@ -127,6 +127,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               label={t('tournaments.numberOfQualifyingRounds')}
               {...register('numberOfQualifyingRounds', { valueAsNumber: true })}
               error={errors.numberOfQualifyingRounds?.message}
+              disabled={watch('pairingMethod') === 'poolPlay'}
             />
 
             <Input
@@ -193,10 +194,18 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
             <Select
               label={t('tournaments.pairingMethod')}
               value={watch('pairingMethod')}
-              onValueChange={(v) => setValue('pairingMethod', v as TournamentFormData['pairingMethod'])}
+              onValueChange={(v) => {
+                setValue('pairingMethod', v as TournamentFormData['pairingMethod']);
+                // Pool Play is fixed at 3 rounds
+                if (v === 'poolPlay') {
+                  setValue('numberOfQualifyingRounds', 3);
+                }
+              }}
             >
               <SelectItem value="swiss">{t('tournaments.pairingMethodOptions.swiss')}</SelectItem>
+              <SelectItem value="swissHotel">{t('tournaments.pairingMethodOptions.swissHotel')}</SelectItem>
               <SelectItem value="roundRobin">{t('tournaments.pairingMethodOptions.roundRobin')}</SelectItem>
+              <SelectItem value="poolPlay">{t('tournaments.pairingMethodOptions.poolPlay')}</SelectItem>
             </Select>
 
             <Select

@@ -126,14 +126,19 @@ pub fn generate_all_qualifying_rounds(
 ) -> Result<Vec<QualifyingRound>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Get the number of qualifying rounds from tournament settings
-    let number_of_qualifying_rounds: i32 = conn
+    // Get tournament info including pairing method
+    let (pairing_method, number_of_qualifying_rounds): (String, i32) = conn
         .query_row(
-            "SELECT number_of_qualifying_rounds FROM tournaments WHERE id = ?1",
+            "SELECT pairing_method, number_of_qualifying_rounds FROM tournaments WHERE id = ?1",
             params![tournament_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?;
+
+    // Swiss system requires round-by-round generation
+    if pairing_method == "swiss" {
+        return Err("Swiss system requires round-by-round generation. Use 'Generate Next Round' instead.".to_string());
+    }
 
     // Get current round number
     let current_round: i32 = conn
@@ -144,9 +149,16 @@ pub fn generate_all_qualifying_rounds(
         )
         .map_err(|e| e.to_string())?;
 
+    // Pool Play is fixed at 3 rounds max
+    let max_rounds = if pairing_method == "poolPlay" {
+        3
+    } else {
+        number_of_qualifying_rounds
+    };
+
     // Generate all remaining rounds
     let mut rounds = Vec::new();
-    for _ in current_round..number_of_qualifying_rounds {
+    for _ in current_round..max_rounds {
         let round = generate_single_round(&conn, &tournament_id)?;
         rounds.push(round);
     }
@@ -181,6 +193,26 @@ fn generate_single_round(
         .map_err(|e| e.to_string())?;
 
     let new_round_number = current_round + 1;
+
+    // Swiss system: verify prior round is complete before generating next
+    if pairing_method == "swiss" && current_round > 0 {
+        let prior_round_complete: bool = conn
+            .query_row(
+                "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
+                params![tournament_id, current_round],
+                |row| Ok(row.get::<_, i32>(0)? != 0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if !prior_round_complete {
+            return Err("Previous round must be completed before generating the next round in Swiss system.".to_string());
+        }
+    }
+
+    // Pool Play: max 3 rounds
+    if pairing_method == "poolPlay" && new_round_number > 3 {
+        return Err("Pool Play format only has 3 rounds.".to_string());
+    }
 
     // Get all teams
     let mut stmt = conn
@@ -258,7 +290,7 @@ fn generate_single_round(
     let mut standings_stmt = conn
         .prepare(
             r#"
-            SELECT team_id, wins, losses, points_for, points_against, differential, buchholz_score, fine_buchholz_score
+            SELECT team_id, wins, losses, points_for, points_against, differential, buchholz_score, fine_buchholz_score, point_quotient, is_eliminated
             FROM team_standings
             WHERE tournament_id = ?1
             ORDER BY wins DESC, buchholz_score DESC, fine_buchholz_score DESC, differential DESC
@@ -279,6 +311,8 @@ fn generate_single_round(
                 differential: row.get(5)?,
                 buchholz_score: row.get(6)?,
                 fine_buchholz_score: row.get(7)?,
+                point_quotient: row.get(8)?,
+                is_eliminated: row.get::<_, i32>(9)? != 0,
                 rank: 0,
             })
         })
@@ -288,10 +322,12 @@ fn generate_single_round(
         .collect();
 
     // Generate pairings based on method
-    let pairings = if pairing_method == "swiss" {
-        generate_swiss_pairings(&teams, &standings, &pairing_history, region_avoidance)?
-    } else {
-        generate_round_robin_pairings(&teams, new_round_number)?
+    let pairings = match pairing_method.as_str() {
+        "swiss" => generate_swiss_pairings(&teams, &standings, &pairing_history, region_avoidance)?,
+        "swissHotel" => generate_swiss_hotel_pairings(&teams, &pairing_history, region_avoidance, new_round_number)?,
+        "roundRobin" => generate_round_robin_pairings(&teams, new_round_number)?,
+        "poolPlay" => generate_pool_play_round(&teams, &standings, &pairing_history, region_avoidance, new_round_number)?,
+        _ => return Err(format!("Unknown pairing method: {}", pairing_method)),
     };
 
     // Assign courts with rotation
@@ -540,6 +576,297 @@ fn generate_round_robin_pairings(
     Ok(pairings)
 }
 
+/// Swiss Hotel pairing: random pairing with graduated constraints (avoid repeats, region avoidance)
+/// All rounds are pre-generated upfront.
+fn generate_swiss_hotel_pairings(
+    teams: &[Team],
+    pairing_history: &HashSet<(String, String)>,
+    region_avoidance: bool,
+    _round_number: i32,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let mut rng = thread_rng();
+
+    // Shuffle teams randomly
+    let mut shuffled_teams: Vec<&Team> = teams.iter().collect();
+    shuffled_teams.shuffle(&mut rng);
+
+    let mut pairings: Vec<(String, Option<String>)> = Vec::new();
+    let mut paired: HashSet<String> = HashSet::new();
+
+    let needs_bye = shuffled_teams.len() % 2 == 1;
+
+    // Helper to check if two teams are from the same region
+    let same_region = |t1: &Team, t2: &Team| -> bool {
+        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
+            !r1.is_empty() && !r2.is_empty() && r1 == r2
+        } else {
+            false
+        }
+    };
+
+    // Try to pair teams with graduated fallback
+    for i in 0..shuffled_teams.len() {
+        let team = shuffled_teams[i];
+        if paired.contains(&team.id) {
+            continue;
+        }
+
+        let mut best_opponent: Option<&Team> = None;
+
+        // Pass 1: Full constraints (no repeat matchups, avoid same region)
+        if region_avoidance {
+            for j in (i + 1)..shuffled_teams.len() {
+                let opponent = shuffled_teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
+                }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                if same_region(team, opponent) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
+            }
+        }
+
+        // Pass 2: Relax region avoidance, but still avoid repeat matchups
+        if best_opponent.is_none() {
+            for j in (i + 1)..shuffled_teams.len() {
+                let opponent = shuffled_teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
+                }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
+            }
+        }
+
+        // Pass 3: Relax all constraints - just find any unpaired opponent
+        if best_opponent.is_none() {
+            for j in (i + 1)..shuffled_teams.len() {
+                let opponent = shuffled_teams[j];
+                if !paired.contains(&opponent.id) {
+                    best_opponent = Some(opponent);
+                    break;
+                }
+            }
+        }
+
+        if let Some(opponent) = best_opponent {
+            pairings.push((team.id.clone(), Some(opponent.id.clone())));
+            paired.insert(team.id.clone());
+            paired.insert(opponent.id.clone());
+        }
+    }
+
+    // Handle BYE
+    if needs_bye {
+        for team in &shuffled_teams {
+            if !paired.contains(&team.id) {
+                pairings.push((team.id.clone(), None));
+                break;
+            }
+        }
+    }
+
+    Ok(pairings)
+}
+
+/// Pool Play pairing: fixed 3-round format
+/// Round 1: Random pairings
+/// Round 2: Winners (1-0) play winners, losers (0-1) play losers
+/// Round 3: Teams with 2 losses are eliminated; teams with 2 wins sit out; teams with 1 win (1-1) play each other
+fn generate_pool_play_round(
+    teams: &[Team],
+    standings: &HashMap<String, TeamStanding>,
+    pairing_history: &HashSet<(String, String)>,
+    region_avoidance: bool,
+    round_number: i32,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let mut rng = thread_rng();
+
+    match round_number {
+        1 => {
+            // Round 1: Random pairings (same as Swiss Hotel round 1)
+            generate_swiss_hotel_pairings(teams, pairing_history, region_avoidance, round_number)
+        }
+        2 => {
+            // Round 2: Winners play winners, losers play losers
+            let mut winners: Vec<&Team> = Vec::new();
+            let mut losers: Vec<&Team> = Vec::new();
+
+            for team in teams {
+                if let Some(standing) = standings.get(&team.id) {
+                    if standing.wins > standing.losses {
+                        winners.push(team);
+                    } else {
+                        losers.push(team);
+                    }
+                } else {
+                    // No standing yet, treat as 0-0 (shouldn't happen in round 2)
+                    losers.push(team);
+                }
+            }
+
+            winners.shuffle(&mut rng);
+            losers.shuffle(&mut rng);
+
+            let mut pairings: Vec<(String, Option<String>)> = Vec::new();
+
+            // Pair winners
+            pair_teams_with_constraints(&mut pairings, &winners, pairing_history, region_avoidance);
+
+            // Pair losers
+            pair_teams_with_constraints(&mut pairings, &losers, pairing_history, region_avoidance);
+
+            // Handle any odd team out (give them a bye)
+            let paired: HashSet<String> = pairings
+                .iter()
+                .flat_map(|(t1, t2)| {
+                    let mut ids = vec![t1.clone()];
+                    if let Some(t2_id) = t2 {
+                        ids.push(t2_id.clone());
+                    }
+                    ids
+                })
+                .collect();
+
+            for team in teams {
+                if !paired.contains(&team.id) {
+                    pairings.push((team.id.clone(), None));
+                }
+            }
+
+            Ok(pairings)
+        }
+        3 => {
+            // Round 3: Teams with 2 losses are eliminated
+            // Teams with 2 wins sit out (already qualified)
+            // Teams with 1-1 play each other
+            let mut one_win_teams: Vec<&Team> = Vec::new();
+
+            for team in teams {
+                if let Some(standing) = standings.get(&team.id) {
+                    // Only 1-1 teams play in round 3
+                    if standing.wins == 1 && standing.losses == 1 {
+                        one_win_teams.push(team);
+                    }
+                }
+            }
+
+            one_win_teams.shuffle(&mut rng);
+
+            let mut pairings: Vec<(String, Option<String>)> = Vec::new();
+
+            // Pair 1-1 teams
+            pair_teams_with_constraints(&mut pairings, &one_win_teams, pairing_history, region_avoidance);
+
+            // Handle odd team out
+            let paired: HashSet<String> = pairings
+                .iter()
+                .flat_map(|(t1, t2)| {
+                    let mut ids = vec![t1.clone()];
+                    if let Some(t2_id) = t2 {
+                        ids.push(t2_id.clone());
+                    }
+                    ids
+                })
+                .collect();
+
+            for team in &one_win_teams {
+                if !paired.contains(&team.id) {
+                    pairings.push((team.id.clone(), None));
+                }
+            }
+
+            Ok(pairings)
+        }
+        _ => Err("Pool Play format only has 3 rounds.".to_string()),
+    }
+}
+
+/// Helper function to pair teams with graduated constraint relaxation
+fn pair_teams_with_constraints(
+    pairings: &mut Vec<(String, Option<String>)>,
+    teams: &[&Team],
+    pairing_history: &HashSet<(String, String)>,
+    region_avoidance: bool,
+) {
+    let mut paired: HashSet<String> = HashSet::new();
+
+    let same_region = |t1: &Team, t2: &Team| -> bool {
+        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
+            !r1.is_empty() && !r2.is_empty() && r1 == r2
+        } else {
+            false
+        }
+    };
+
+    for i in 0..teams.len() {
+        let team = teams[i];
+        if paired.contains(&team.id) {
+            continue;
+        }
+
+        let mut best_opponent: Option<&Team> = None;
+
+        // Pass 1: Full constraints
+        if region_avoidance {
+            for j in (i + 1)..teams.len() {
+                let opponent = teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
+                }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                if same_region(team, opponent) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
+            }
+        }
+
+        // Pass 2: Relax region avoidance
+        if best_opponent.is_none() {
+            for j in (i + 1)..teams.len() {
+                let opponent = teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
+                }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
+            }
+        }
+
+        // Pass 3: Any unpaired opponent
+        if best_opponent.is_none() {
+            for j in (i + 1)..teams.len() {
+                let opponent = teams[j];
+                if !paired.contains(&opponent.id) {
+                    best_opponent = Some(opponent);
+                    break;
+                }
+            }
+        }
+
+        if let Some(opponent) = best_opponent {
+            pairings.push((team.id.clone(), Some(opponent.id.clone())));
+            paired.insert(team.id.clone());
+            paired.insert(opponent.id.clone());
+        }
+    }
+}
+
 fn assign_courts(
     pairings: Vec<(String, Option<String>)>,
     number_of_courts: i32,
@@ -588,12 +915,17 @@ pub fn update_game_score(
 pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Get tournament ID
-    let tournament_id: String = conn
+    // Get tournament ID and pairing method
+    let (tournament_id, pairing_method): (String, String) = conn
         .query_row(
-            "SELECT tournament_id FROM qualifying_rounds WHERE id = ?1",
+            r#"
+            SELECT qr.tournament_id, t.pairing_method
+            FROM qualifying_rounds qr
+            JOIN tournaments t ON qr.tournament_id = t.id
+            WHERE qr.id = ?1
+            "#,
             params![round_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -677,8 +1009,43 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
         }
     }
 
-    // Calculate Buchholz scores and update ranks
-    calculate_buchholz_and_ranks(&conn, &tournament_id)?;
+    // Get round number to check for Pool Play elimination
+    let round_number: i32 = conn
+        .query_row(
+            "SELECT round_number FROM qualifying_rounds WHERE id = ?1",
+            params![round_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Calculate rankings based on pairing method
+    match pairing_method.as_str() {
+        "swiss" => {
+            // Swiss uses Buchholz tiebreaker
+            calculate_buchholz_and_ranks(&conn, &tournament_id)?;
+        }
+        "swissHotel" | "roundRobin" | "poolPlay" => {
+            // These use point quotient tiebreaker
+            calculate_point_quotient_ranks(&conn, &tournament_id)?;
+        }
+        _ => {
+            // Default to Buchholz
+            calculate_buchholz_and_ranks(&conn, &tournament_id)?;
+        }
+    }
+
+    // For Pool Play, mark teams with 2 losses as eliminated after round 3
+    if pairing_method == "poolPlay" && round_number == 3 {
+        conn.execute(
+            r#"
+            UPDATE team_standings
+            SET is_eliminated = 1
+            WHERE tournament_id = ?1 AND losses >= 2
+            "#,
+            params![tournament_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     // Mark round as complete
     conn.execute(
@@ -865,6 +1232,88 @@ fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str
     });
 
     for (rank, (team_id, _, _, _, _, _)) in ranked.iter().enumerate() {
+        conn.execute(
+            "UPDATE team_standings SET rank = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
+            params![tournament_id, team_id, (rank + 1) as i32],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Calculate ranks using point quotient tiebreaker (for Swiss Hotel, Round Robin, Pool Play)
+/// Tiebreaker order: wins → differential → point_quotient → random
+fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+    // Get all standings
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT team_id, wins, differential, points_for, points_against
+            FROM team_standings
+            WHERE tournament_id = ?1
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let standings: Vec<(String, i32, i32, i32, i32)> = stmt
+        .query_map(params![tournament_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Calculate and update point quotient for each team
+    for (team_id, _, _, points_for, points_against) in &standings {
+        let point_quotient = if *points_against > 0 {
+            *points_for as f64 / *points_against as f64
+        } else if *points_for > 0 {
+            f64::MAX // Infinite quotient if no points against but some points for
+        } else {
+            1.0 // Default to 1.0 if no games played
+        };
+
+        conn.execute(
+            "UPDATE team_standings SET point_quotient = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
+            params![tournament_id, team_id, point_quotient],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Generate random tiebreaker values for each team
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let random_tiebreakers: HashMap<String, u64> = standings
+        .iter()
+        .map(|(id, _, _, _, _)| (id.clone(), rng.gen()))
+        .collect();
+
+    // Build ranked list with point quotient
+    let mut ranked: Vec<(String, i32, i32, f64, u64)> = standings
+        .iter()
+        .map(|(id, wins, diff, points_for, points_against)| {
+            let point_quotient = if *points_against > 0 {
+                *points_for as f64 / *points_against as f64
+            } else if *points_for > 0 {
+                f64::MAX
+            } else {
+                1.0
+            };
+            let random_tb = random_tiebreakers.get(id).copied().unwrap_or(0);
+            (id.clone(), *wins, *diff, point_quotient, random_tb)
+        })
+        .collect();
+
+    // Sort by: wins DESC → differential DESC → point_quotient DESC → random
+    ranked.sort_by(|a, b| {
+        b.1.cmp(&a.1) // wins (descending)
+            .then(b.2.cmp(&a.2)) // differential (descending)
+            .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal)) // point_quotient (descending)
+            .then(b.4.cmp(&a.4)) // random tiebreaker (descending)
+    });
+
+    for (rank, (team_id, _, _, _, _)) in ranked.iter().enumerate() {
         conn.execute(
             "UPDATE team_standings SET rank = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
             params![tournament_id, team_id, (rank + 1) as i32],

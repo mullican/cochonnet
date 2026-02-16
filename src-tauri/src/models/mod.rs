@@ -131,6 +131,8 @@ pub struct TeamStanding {
     pub differential: i32,
     pub buchholz_score: f64,
     pub fine_buchholz_score: f64,
+    pub point_quotient: f64,
+    pub is_eliminated: bool,
     pub rank: i32,
 }
 

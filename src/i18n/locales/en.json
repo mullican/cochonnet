@@ -77,7 +77,9 @@
     "pairingMethod": "Qualifier Format",
     "pairingMethodOptions": {
       "swiss": "Swiss System",
-      "roundRobin": "Round Robin"
+      "swissHotel": "Swiss Hotel",
+      "roundRobin": "Round Robin",
+      "poolPlay": "Pool Play"
     },
     "regionAvoidance": "Avoid Same-Region Matchups",
     "numberOfQualifyingRounds": "Number of Qualifying Rounds",
@@ -126,6 +128,10 @@
     "differential": "Differential",
     "buchholz": "Buchholz",
     "fineBuchholz": "Fine Buch",
+    "pointQuotient": "PQ",
+    "generateNextRound": "Generate Next Round",
+    "eliminated": "Eliminated",
+    "qualified": "Qualified",
     "noRounds": "No qualifying rounds yet. Generate pairings to start the first round."
   },
   "brackets": {
@@ -181,6 +187,9 @@
     "legendDifferential": "+/- = Point Differential",
     "legendBuchholz": "Buch = Buchholz Score",
     "legendFineBuchholz": "FBuch = Fine Buchholz Score",
+    "legendPointQuotient": "PQ = Point Quotient (Points For / Points Against)",
+    "tiebreakerSwiss": "Tie-breaker order: Wins → Buchholz → Fine Buchholz → Differential → Random",
+    "tiebreakerPointQuotient": "Tie-breaker order: Wins → Differential → Point Quotient → Random",
     "tiebreaker": "Tie-breaker order: Wins → Buchholz → Fine Buchholz → Differential → Random"
   },
   "validation": {

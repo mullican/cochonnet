@@ -1,7 +1,7 @@
 export type TeamComposition = 'men' | 'women' | 'mixed' | 'select';
 export type TournamentType = 'regional' | 'national' | 'open' | 'club';
 export type TournamentFormat = 'single' | 'double' | 'triple';
-export type PairingMethod = 'swiss' | 'roundRobin';
+export type PairingMethod = 'swiss' | 'swissHotel' | 'roundRobin' | 'poolPlay';
 export type BracketSize = 4 | 8 | 16 | 32;
 
 export interface Tournament {
@@ -73,6 +73,8 @@ export interface TeamStanding {
   differential: number;
   buchholzScore: number;
   fineBuchholzScore: number;
+  pointQuotient: number;
+  isEliminated: boolean;
   rank: number;
 }
 

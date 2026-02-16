@@ -77,7 +77,9 @@
     "pairingMethod": "Format de Qualification",
     "pairingMethodOptions": {
       "swiss": "Système Suisse",
-      "roundRobin": "Toutes Rondes"
+      "swissHotel": "Suisse Hôtel",
+      "roundRobin": "Toutes Rondes",
+      "poolPlay": "Poules"
     },
     "regionAvoidance": "Éviter les Matchs de Même Région",
     "numberOfQualifyingRounds": "Nombre de Tours de Qualification",
@@ -126,6 +128,10 @@
     "differential": "Différence",
     "buchholz": "Buchholz",
     "fineBuchholz": "Buch Fin",
+    "pointQuotient": "QP",
+    "generateNextRound": "Générer le Prochain Tour",
+    "eliminated": "Éliminé",
+    "qualified": "Qualifié",
     "noRounds": "Pas encore de tours de qualification. Générez les appariements pour commencer."
   },
   "brackets": {
@@ -181,6 +187,9 @@
     "legendDifferential": "+/- = Différence de Points",
     "legendBuchholz": "Buch = Score Buchholz",
     "legendFineBuchholz": "FBuch = Score Buchholz Fin",
+    "legendPointQuotient": "QP = Quotient de Points (Points Pour / Points Contre)",
+    "tiebreakerSwiss": "Ordre de départage: Victoires → Buchholz → Buchholz Fin → Différence → Tirage au Sort",
+    "tiebreakerPointQuotient": "Ordre de départage: Victoires → Différence → Quotient de Points → Tirage au Sort",
     "tiebreaker": "Ordre de départage: Victoires → Buchholz → Buchholz Fin → Différence → Tirage au Sort"
   },
   "validation": {

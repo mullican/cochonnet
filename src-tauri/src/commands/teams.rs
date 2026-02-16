@@ -285,7 +285,7 @@ pub fn get_standings(db: State<Database>, tournament_id: String) -> Result<Vec<T
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_id, wins, losses, points_for, points_against, differential, buchholz_score, fine_buchholz_score, rank
+            SELECT id, tournament_id, team_id, wins, losses, points_for, points_against, differential, buchholz_score, fine_buchholz_score, point_quotient, is_eliminated, rank
             FROM team_standings
             WHERE tournament_id = ?1
             ORDER BY rank ASC, wins DESC, buchholz_score DESC, fine_buchholz_score DESC, differential DESC
@@ -306,7 +306,9 @@ pub fn get_standings(db: State<Database>, tournament_id: String) -> Result<Vec<T
                 differential: row.get(7)?,
                 buchholz_score: row.get(8)?,
                 fine_buchholz_score: row.get(9)?,
-                rank: row.get(10)?,
+                point_quotient: row.get(10)?,
+                is_eliminated: row.get::<_, i32>(11)? != 0,
+                rank: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?

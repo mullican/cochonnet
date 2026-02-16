@@ -30,9 +30,11 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     loading,
     fetchQualifyingRounds,
     generateAllQualifyingRounds,
+    generatePairings,
     deleteAllQualifyingRounds,
     fetchStandings,
     teams,
+    currentTournament,
   } = useTournamentStore();
 
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   }, [qualifyingRounds, selectedRoundId]);
 
-  const handleGeneratePairings = async () => {
+  const handleGenerateAllRounds = async () => {
     try {
       const rounds = await generateAllQualifyingRounds(tournamentId);
       if (rounds.length > 0) {
@@ -59,6 +61,15 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
       }
     } catch (error) {
       console.error('Failed to generate pairings:', error);
+    }
+  };
+
+  const handleGenerateNextRound = async () => {
+    try {
+      const round = await generatePairings(tournamentId);
+      setSelectedRoundId(round.id);
+    } catch (error) {
+      console.error('Failed to generate next round:', error);
     }
   };
 
@@ -75,12 +86,24 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
 
   const canGeneratePairings = teams.length >= 2;
   const hasRounds = qualifyingRounds.length > 0;
+  const pairingMethod = currentTournament?.pairingMethod || 'swiss';
 
   // Check if any games have scores - if so, deletion is not allowed
   const hasScores = qualifyingGames.some(
     (g) => g.team1Score !== null || g.team2Score !== null
   );
   const canDeleteRounds = hasRounds && !hasScores;
+
+  // For Swiss system: can generate next round if prior round is complete
+  const lastRound = qualifyingRounds[qualifyingRounds.length - 1];
+  const canGenerateNextRound = pairingMethod === 'swiss' &&
+    canGeneratePairings &&
+    (!lastRound || lastRound.isComplete) &&
+    qualifyingRounds.length < (currentTournament?.numberOfQualifyingRounds || 5);
+
+  // Determine which generate button to show
+  const showGenerateAllButton = !hasRounds && pairingMethod !== 'swiss';
+  const showGenerateNextButton = pairingMethod === 'swiss' && canGenerateNextRound;
 
   return (
     <div className="space-y-6">
@@ -96,12 +119,20 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
               {t('pairing.deleteRounds')}
             </Button>
           )}
-          {!hasRounds && (
+          {showGenerateAllButton && (
             <Button
-              onClick={handleGeneratePairings}
+              onClick={handleGenerateAllRounds}
               disabled={!canGeneratePairings || loading}
             >
               {t('pairing.generatePairings')}
+            </Button>
+          )}
+          {showGenerateNextButton && (
+            <Button
+              onClick={handleGenerateNextRound}
+              disabled={loading}
+            >
+              {t('pairing.generateNextRound')}
             </Button>
           )}
         </div>
