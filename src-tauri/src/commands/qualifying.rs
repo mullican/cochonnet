@@ -258,10 +258,10 @@ fn generate_single_round(
     let mut standings_stmt = conn
         .prepare(
             r#"
-            SELECT team_id, wins, losses, points_for, points_against, differential, buchholz_score
+            SELECT team_id, wins, losses, points_for, points_against, differential, buchholz_score, fine_buchholz_score
             FROM team_standings
             WHERE tournament_id = ?1
-            ORDER BY wins DESC, differential DESC, points_for DESC
+            ORDER BY wins DESC, buchholz_score DESC, fine_buchholz_score DESC, differential DESC
             "#,
         )
         .map_err(|e| e.to_string())?;
@@ -278,6 +278,7 @@ fn generate_single_round(
                 points_against: row.get(4)?,
                 differential: row.get(5)?,
                 buchholz_score: row.get(6)?,
+                fine_buchholz_score: row.get(7)?,
                 rank: 0,
             })
         })
@@ -400,6 +401,15 @@ fn generate_swiss_pairings(
     // If odd number of teams, handle BYE
     let needs_bye = sorted_teams.len() % 2 == 1;
 
+    // Helper to check if two teams are from the same region
+    let same_region = |t1: &Team, t2: &Team| -> bool {
+        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
+            !r1.is_empty() && !r2.is_empty() && r1 == r2
+        } else {
+            false
+        }
+    };
+
     // Try to pair teams from similar score groups
     for i in 0..sorted_teams.len() {
         let team = sorted_teams[i];
@@ -407,34 +417,46 @@ fn generate_swiss_pairings(
             continue;
         }
 
-        // Find best opponent
+        // Find best opponent with graduated fallback:
+        // Pass 1: Respect both pairing history AND region avoidance
+        // Pass 2: Respect pairing history only (relax region avoidance)
+        // Pass 3: Any unpaired opponent (relax all constraints)
         let mut best_opponent: Option<&Team> = None;
 
-        for j in (i + 1)..sorted_teams.len() {
-            let opponent = sorted_teams[j];
-            if paired.contains(&opponent.id) {
-                continue;
-            }
-
-            // Check if already played
-            if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                continue;
-            }
-
-            // Check region avoidance
-            if region_avoidance {
-                if let (Some(r1), Some(r2)) = (&team.region, &opponent.region) {
-                    if !r1.is_empty() && !r2.is_empty() && r1 == r2 {
-                        continue;
-                    }
+        // Pass 1: Full constraints (no repeat matchups, avoid same region)
+        if region_avoidance {
+            for j in (i + 1)..sorted_teams.len() {
+                let opponent = sorted_teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
                 }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                if same_region(team, opponent) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
             }
-
-            best_opponent = Some(opponent);
-            break;
         }
 
-        // If no valid opponent found, try again without constraints
+        // Pass 2: Relax region avoidance, but still avoid repeat matchups
+        if best_opponent.is_none() {
+            for j in (i + 1)..sorted_teams.len() {
+                let opponent = sorted_teams[j];
+                if paired.contains(&opponent.id) {
+                    continue;
+                }
+                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
+                    continue;
+                }
+                best_opponent = Some(opponent);
+                break;
+            }
+        }
+
+        // Pass 3: Relax all constraints - just find any unpaired opponent
         if best_opponent.is_none() {
             for j in (i + 1)..sorted_teams.len() {
                 let opponent = sorted_teams[j];
@@ -668,6 +690,65 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+pub fn delete_all_qualifying_rounds(
+    db: State<Database>,
+    tournament_id: String,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Check if any rounds have scores entered
+    let scored_games: i32 = conn
+        .query_row(
+            r#"
+            SELECT COUNT(*) FROM qualifying_games g
+            JOIN qualifying_rounds r ON g.round_id = r.id
+            WHERE r.tournament_id = ?1 AND (g.team1_score IS NOT NULL OR g.team2_score IS NOT NULL)
+            "#,
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if scored_games > 0 {
+        return Err("Cannot delete qualifying rounds after scores have been entered.".to_string());
+    }
+
+    // Delete court history
+    conn.execute(
+        "DELETE FROM court_history WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete pairing history
+    conn.execute(
+        "DELETE FROM pairing_history WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete games (via cascade or explicit)
+    conn.execute(
+        r#"
+        DELETE FROM qualifying_games WHERE round_id IN (
+            SELECT id FROM qualifying_rounds WHERE tournament_id = ?1
+        )
+        "#,
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete rounds
+    conn.execute(
+        "DELETE FROM qualifying_rounds WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
     // Get all standings
     let mut stmt = conn
@@ -688,60 +769,102 @@ fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str
         .filter_map(|r| r.ok())
         .collect();
 
-    // Get opponent wins for Buchholz calculation
-    let mut buchholz_scores: HashMap<String, f64> = HashMap::new();
+    // Get opponents for each team (for Buchholz calculations)
+    let mut team_opponents: HashMap<String, Vec<String>> = HashMap::new();
 
     for (team_id, _, _, _) in &standings {
         let mut stmt = conn
             .prepare(
                 r#"
-                SELECT ts.wins
+                SELECT CASE
+                    WHEN ph.team1_id = ?2 THEN ph.team2_id
+                    ELSE ph.team1_id
+                END as opponent_id
                 FROM pairing_history ph
-                JOIN team_standings ts ON (
-                    (ph.team1_id = ?2 AND ts.team_id = ph.team2_id) OR
-                    (ph.team2_id = ?2 AND ts.team_id = ph.team1_id)
-                )
-                WHERE ph.tournament_id = ?1 AND ts.tournament_id = ?1
+                WHERE ph.tournament_id = ?1
+                AND (ph.team1_id = ?2 OR ph.team2_id = ?2)
                 "#,
             )
             .map_err(|e| e.to_string())?;
 
-        let opponent_wins: Vec<i32> = stmt
+        let opponents: Vec<String> = stmt
             .query_map(params![tournament_id, team_id], |row| row.get(0))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
 
-        let buchholz: f64 = opponent_wins.iter().map(|&w| w as f64).sum();
+        team_opponents.insert(team_id.clone(), opponents);
+    }
+
+    // Build a map of team_id -> wins for quick lookup
+    let team_wins: HashMap<String, i32> = standings
+        .iter()
+        .map(|(id, wins, _, _)| (id.clone(), *wins))
+        .collect();
+
+    // Calculate Buchholz scores (sum of opponent wins)
+    let mut buchholz_scores: HashMap<String, f64> = HashMap::new();
+
+    for (team_id, _, _, _) in &standings {
+        let opponents = team_opponents.get(team_id).cloned().unwrap_or_default();
+        let buchholz: f64 = opponents
+            .iter()
+            .map(|opp_id| team_wins.get(opp_id).copied().unwrap_or(0) as f64)
+            .sum();
         buchholz_scores.insert(team_id.clone(), buchholz);
     }
 
-    // Update Buchholz scores
-    for (team_id, score) in &buchholz_scores {
+    // Calculate Fine Buchholz scores (sum of opponents' Buchholz scores)
+    let mut fine_buchholz_scores: HashMap<String, f64> = HashMap::new();
+
+    for (team_id, _, _, _) in &standings {
+        let opponents = team_opponents.get(team_id).cloned().unwrap_or_default();
+        let fine_buchholz: f64 = opponents
+            .iter()
+            .map(|opp_id| buchholz_scores.get(opp_id).copied().unwrap_or(0.0))
+            .sum();
+        fine_buchholz_scores.insert(team_id.clone(), fine_buchholz);
+    }
+
+    // Update Buchholz and Fine Buchholz scores in database
+    for (team_id, buchholz) in &buchholz_scores {
+        let fine_buchholz = fine_buchholz_scores.get(team_id).copied().unwrap_or(0.0);
         conn.execute(
-            "UPDATE team_standings SET buchholz_score = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
-            params![tournament_id, team_id, score],
+            "UPDATE team_standings SET buchholz_score = ?3, fine_buchholz_score = ?4 WHERE tournament_id = ?1 AND team_id = ?2",
+            params![tournament_id, team_id, buchholz, fine_buchholz],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    // Calculate ranks
-    let mut ranked: Vec<(String, i32, i32, i32, f64)> = standings
+    // Calculate ranks with tiebreaker order: wins → buchholz → fine_buchholz → differential → random
+    // Generate random tiebreaker values for each team
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let random_tiebreakers: HashMap<String, u64> = standings
         .iter()
-        .map(|(id, wins, diff, pf)| {
+        .map(|(id, _, _, _)| (id.clone(), rng.gen()))
+        .collect();
+
+    let mut ranked: Vec<(String, i32, f64, f64, i32, u64)> = standings
+        .iter()
+        .map(|(id, wins, diff, _)| {
             let buchholz = buchholz_scores.get(id).copied().unwrap_or(0.0);
-            (id.clone(), *wins, *diff, *pf, buchholz)
+            let fine_buchholz = fine_buchholz_scores.get(id).copied().unwrap_or(0.0);
+            let random_tb = random_tiebreakers.get(id).copied().unwrap_or(0);
+            (id.clone(), *wins, buchholz, fine_buchholz, *diff, random_tb)
         })
         .collect();
 
+    // Sort by: wins DESC → buchholz DESC → fine_buchholz DESC → differential DESC → random
     ranked.sort_by(|a, b| {
-        b.1.cmp(&a.1) // wins
-            .then(b.2.cmp(&a.2)) // differential
-            .then(b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal)) // buchholz
-            .then(b.3.cmp(&a.3)) // points for
+        b.1.cmp(&a.1) // wins (descending)
+            .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)) // buchholz (descending)
+            .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal)) // fine_buchholz (descending)
+            .then(b.4.cmp(&a.4)) // differential (descending)
+            .then(b.5.cmp(&a.5)) // random tiebreaker (descending)
     });
 
-    for (rank, (team_id, _, _, _, _)) in ranked.iter().enumerate() {
+    for (rank, (team_id, _, _, _, _, _)) in ranked.iter().enumerate() {
         conn.execute(
             "UPDATE team_standings SET rank = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
             params![tournament_id, team_id, (rank + 1) as i32],

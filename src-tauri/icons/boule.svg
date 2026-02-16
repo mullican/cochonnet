@@ -18,23 +18,47 @@
       <stop offset="50%" stop-color="#1f2937" stop-opacity="0.7" />
       <stop offset="100%" stop-color="#374151" stop-opacity="0.5" />
     </linearGradient>
+    <!-- Red cochonnet gradient -->
+    <linearGradient id="redGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fca5a5" />
+      <stop offset="25%" stop-color="#ef4444" />
+      <stop offset="50%" stop-color="#dc2626" />
+      <stop offset="75%" stop-color="#ef4444" />
+      <stop offset="100%" stop-color="#b91c1c" />
+    </linearGradient>
+    <linearGradient id="redShineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="white" stop-opacity="0" />
+    </linearGradient>
   </defs>
 
-  <!-- Shadow -->
-  <ellipse cx="256" cy="480" rx="180" ry="24" fill="#1f2937" opacity="0.3" />
+  <!-- Shadow for boule -->
+  <ellipse cx="256" cy="440" rx="160" ry="20" fill="#1f2937" opacity="0.25" />
 
-  <!-- Main sphere -->
-  <circle cx="256" cy="256" r="224" fill="url(#steelGradient)" />
+  <!-- Main steel boule (moved up) -->
+  <circle cx="256" cy="220" r="200" fill="url(#steelGradient)" />
 
   <!-- Grooves - characteristic pétanque boule lines -->
-  <path d="M56 192 Q256 160 456 192" fill="none" stroke="url(#grooveGradient)" stroke-width="16" stroke-linecap="round" />
-  <path d="M40 256 Q256 224 472 256" fill="none" stroke="url(#grooveGradient)" stroke-width="16" stroke-linecap="round" />
-  <path d="M56 320 Q256 288 456 320" fill="none" stroke="url(#grooveGradient)" stroke-width="16" stroke-linecap="round" />
-  <path d="M88 384 Q256 352 424 384" fill="none" stroke="url(#grooveGradient)" stroke-width="14" stroke-linecap="round" />
+  <path d="M76 160 Q256 130 436 160" fill="none" stroke="url(#grooveGradient)" stroke-width="14" stroke-linecap="round" />
+  <path d="M64 220 Q256 190 448 220" fill="none" stroke="url(#grooveGradient)" stroke-width="14" stroke-linecap="round" />
+  <path d="M76 280 Q256 250 436 280" fill="none" stroke="url(#grooveGradient)" stroke-width="14" stroke-linecap="round" />
+  <path d="M104 340 Q256 310 408 340" fill="none" stroke="url(#grooveGradient)" stroke-width="12" stroke-linecap="round" />
 
-  <!-- Highlight shine -->
-  <ellipse cx="160" cy="140" rx="80" ry="50" fill="url(#shineGradient)" />
+  <!-- Highlight shine on boule -->
+  <ellipse cx="170" cy="120" rx="70" ry="45" fill="url(#shineGradient)" />
 
-  <!-- Small highlight dot -->
-  <circle cx="120" cy="110" r="20" fill="white" opacity="0.5" />
+  <!-- Small highlight dot on boule -->
+  <circle cx="135" cy="95" r="18" fill="white" opacity="0.5" />
+
+  <!-- Shadow for cochonnet -->
+  <ellipse cx="256" cy="470" rx="70" ry="10" fill="#1f2937" opacity="0.3" />
+
+  <!-- Red cochonnet (in front) -->
+  <circle cx="256" cy="420" r="80" fill="url(#redGradient)" />
+
+  <!-- Highlight shine on cochonnet -->
+  <ellipse cx="220" cy="390" rx="30" ry="20" fill="url(#redShineGradient)" />
+
+  <!-- Small highlight dot on cochonnet -->
+  <circle cx="205" cy="380" r="10" fill="white" opacity="0.4" />
 </svg>

@@ -13,7 +13,7 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
         .prepare(
             r#"
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
-                   director, head_umpire, format, day_type, number_of_courts,
+                   director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
                    pairing_method, region_avoidance, created_at, updated_at
             FROM tournaments
@@ -34,17 +34,16 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
                 director: row.get(6)?,
                 head_umpire: row.get(7)?,
                 format: row.get(8)?,
-                day_type: row.get(9)?,
-                number_of_courts: row.get(10)?,
-                number_of_qualifying_rounds: row.get(11)?,
-                has_consolante: row.get::<_, i32>(12)? != 0,
-                advance_all: row.get::<_, i32>(13)? != 0,
-                advance_count: row.get(14)?,
-                bracket_size: row.get(15)?,
-                pairing_method: row.get(16)?,
-                region_avoidance: row.get::<_, i32>(17)? != 0,
-                created_at: row.get(18)?,
-                updated_at: row.get(19)?,
+                number_of_courts: row.get(9)?,
+                number_of_qualifying_rounds: row.get(10)?,
+                has_consolante: row.get::<_, i32>(11)? != 0,
+                advance_all: row.get::<_, i32>(12)? != 0,
+                advance_count: row.get(13)?,
+                bracket_size: row.get(14)?,
+                pairing_method: row.get(15)?,
+                region_avoidance: row.get::<_, i32>(16)? != 0,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -62,7 +61,7 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
         .query_row(
             r#"
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
-                   director, head_umpire, format, day_type, number_of_courts,
+                   director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
                    pairing_method, region_avoidance, created_at, updated_at
             FROM tournaments
@@ -80,17 +79,16 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
                     director: row.get(6)?,
                     head_umpire: row.get(7)?,
                     format: row.get(8)?,
-                    day_type: row.get(9)?,
-                    number_of_courts: row.get(10)?,
-                    number_of_qualifying_rounds: row.get(11)?,
-                    has_consolante: row.get::<_, i32>(12)? != 0,
-                    advance_all: row.get::<_, i32>(13)? != 0,
-                    advance_count: row.get(14)?,
-                    bracket_size: row.get(15)?,
-                    pairing_method: row.get(16)?,
-                    region_avoidance: row.get::<_, i32>(17)? != 0,
-                    created_at: row.get(18)?,
-                    updated_at: row.get(19)?,
+                    number_of_courts: row.get(9)?,
+                    number_of_qualifying_rounds: row.get(10)?,
+                    has_consolante: row.get::<_, i32>(11)? != 0,
+                    advance_all: row.get::<_, i32>(12)? != 0,
+                    advance_count: row.get(13)?,
+                    bracket_size: row.get(14)?,
+                    pairing_method: row.get(15)?,
+                    region_avoidance: row.get::<_, i32>(16)? != 0,
+                    created_at: row.get(17)?,
+                    updated_at: row.get(18)?,
                 })
             },
         )
@@ -116,7 +114,7 @@ pub fn create_tournament(
             director, head_umpire, format, day_type, number_of_courts,
             number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
             pairing_method, region_avoidance, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         "#,
         params![
             id,
@@ -128,7 +126,6 @@ pub fn create_tournament(
             data.director,
             data.head_umpire,
             data.format,
-            data.day_type,
             data.number_of_courts,
             data.number_of_qualifying_rounds,
             if data.has_consolante { 1 } else { 0 },
@@ -167,7 +164,6 @@ pub fn create_tournament(
         director: data.director,
         head_umpire: data.head_umpire,
         format: data.format,
-        day_type: data.day_type,
         number_of_courts: data.number_of_courts,
         number_of_qualifying_rounds: data.number_of_qualifying_rounds,
         has_consolante: data.has_consolante,
@@ -191,6 +187,36 @@ pub fn update_tournament(
 ) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // Check if qualifying rounds have been generated
+    let rounds_exist: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM qualifying_rounds WHERE tournament_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rounds_exist > 0 {
+        // Get current tournament settings to check if locked fields are being changed
+        let (current_courts, current_rounds, current_pairing): (i32, i32, String) = conn
+            .query_row(
+                "SELECT number_of_courts, number_of_qualifying_rounds, pairing_method FROM tournaments WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if data.number_of_courts != current_courts {
+            return Err("Cannot change number of courts after qualifying rounds have been generated. Delete all rounds first.".to_string());
+        }
+        if data.number_of_qualifying_rounds != current_rounds {
+            return Err("Cannot change number of qualifying rounds after rounds have been generated. Delete all rounds first.".to_string());
+        }
+        if data.pairing_method != current_pairing {
+            return Err("Cannot change pairing method after qualifying rounds have been generated. Delete all rounds first.".to_string());
+        }
+    }
+
     let now = Utc::now().to_rfc3339();
 
     conn.execute(
@@ -204,16 +230,15 @@ pub fn update_tournament(
             director = ?7,
             head_umpire = ?8,
             format = ?9,
-            day_type = ?10,
-            number_of_courts = ?11,
-            number_of_qualifying_rounds = ?12,
-            has_consolante = ?13,
-            advance_all = ?14,
-            advance_count = ?15,
-            bracket_size = ?16,
-            pairing_method = ?17,
-            region_avoidance = ?18,
-            updated_at = ?19
+            number_of_courts = ?10,
+            number_of_qualifying_rounds = ?11,
+            has_consolante = ?12,
+            advance_all = ?13,
+            advance_count = ?14,
+            bracket_size = ?15,
+            pairing_method = ?16,
+            region_avoidance = ?17,
+            updated_at = ?18
         WHERE id = ?1
         "#,
         params![
@@ -226,7 +251,6 @@ pub fn update_tournament(
             data.director,
             data.head_umpire,
             data.format,
-            data.day_type,
             data.number_of_courts,
             data.number_of_qualifying_rounds,
             if data.has_consolante { 1 } else { 0 },

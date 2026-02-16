@@ -28,18 +28,24 @@ interface TeamsListProps {
 export function TeamsList({ tournamentId }: TeamsListProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { teams, loading, fetchTeams, createTeam, updateTeam, deleteTeam, importTeams } = useTournamentStore();
+  const { teams, qualifyingRounds, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds } = useTournamentStore();
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTeams(tournamentId);
-  }, [tournamentId, fetchTeams]);
+    fetchQualifyingRounds(tournamentId);
+  }, [tournamentId, fetchTeams, fetchQualifyingRounds]);
+
+  const hasRounds = qualifyingRounds.length > 0;
+  const canDeleteAllTeams = teams.length > 0 && !hasRounds;
 
   const handleAddTeam = async (data: TeamFormData) => {
     try {
@@ -83,6 +89,16 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
       setSelectedTeam(null);
     } catch (error) {
       console.error('Failed to delete team:', error);
+    }
+  };
+
+  const handleDeleteAllTeams = async () => {
+    setDeleteAllError(null);
+    try {
+      await deleteAllTeams(tournamentId);
+      setDeleteAllDialogOpen(false);
+    } catch (error) {
+      setDeleteAllError(String(error));
     }
   };
 
@@ -147,6 +163,15 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">{t('teams.title')}</h2>
         <div className="flex gap-2">
+          {canDeleteAllTeams && (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setDeleteAllDialogOpen(true)}
+            >
+              {t('teams.deleteAll')}
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={downloadTemplate}>
             {t('teams.downloadTemplate')}
           </Button>
@@ -223,16 +248,18 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                       >
                         {t('common.edit')}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedTeam(team);
-                          setDeleteDialogOpen(true);
-                        }}
-                      >
-                        {t('common.delete')}
-                      </Button>
+                      {!hasRounds && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedTeam(team);
+                            setDeleteDialogOpen(true);
+                          }}
+                        >
+                          {t('common.delete')}
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -298,6 +325,35 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
               {t('common.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDeleteTeam}>
+              {t('common.delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete All Teams Confirmation Dialog */}
+      <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('teams.deleteAll')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-500">{t('teams.deleteAllConfirm')}</p>
+          {deleteAllError && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {deleteAllError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDeleteAllDialogOpen(false);
+                setDeleteAllError(null);
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" onClick={handleDeleteAllTeams} disabled={loading}>
               {t('common.delete')}
             </Button>
           </DialogFooter>

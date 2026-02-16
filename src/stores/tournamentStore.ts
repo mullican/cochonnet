@@ -28,11 +28,13 @@ interface TournamentState {
   updateTeam: (id: string, data: Partial<Team>) => Promise<void>;
   deleteTeam: (id: string) => Promise<void>;
   importTeams: (tournamentId: string, teams: Partial<Team>[]) => Promise<number>;
+  deleteAllTeams: (tournamentId: string) => Promise<void>;
 
   // Qualifying round actions
   fetchQualifyingRounds: (tournamentId: string) => Promise<void>;
   generatePairings: (tournamentId: string) => Promise<QualifyingRound>;
   generateAllQualifyingRounds: (tournamentId: string) => Promise<QualifyingRound[]>;
+  deleteAllQualifyingRounds: (tournamentId: string) => Promise<void>;
   fetchGamesForRound: (roundId: string) => Promise<void>;
   updateGameScore: (gameId: string, team1Score: number, team2Score: number) => Promise<void>;
   completeRound: (roundId: string) => Promise<void>;
@@ -205,6 +207,17 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
     }
   },
 
+  deleteAllTeams: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      await invoke('delete_all_teams', { tournamentId });
+      set({ teams: [], standings: [], loading: false });
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
   // Qualifying round actions
   fetchQualifyingRounds: async (tournamentId: string) => {
     set({ loading: true, error: null });
@@ -246,6 +259,17 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
         loading: false,
       }));
       return rounds;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  deleteAllQualifyingRounds: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      await invoke('delete_all_qualifying_rounds', { tournamentId });
+      set({ qualifyingRounds: [], qualifyingGames: [], loading: false });
     } catch (error) {
       set({ error: String(error), loading: false });
       throw error;

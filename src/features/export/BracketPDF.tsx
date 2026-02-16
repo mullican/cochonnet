@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
 import { formatTeamName } from '../../lib/utils';
+import type { PDFTranslations } from './ScoreSheetPDF';
 
 // Compact dimensions for fitting 16-team bracket on one page
 const MATCH_WIDTH = 110;
@@ -132,12 +133,13 @@ interface BracketPDFProps {
   teams: Team[];
   brackets: Bracket[];
   matches: BracketMatch[];
+  translations: PDFTranslations;
 }
 
-export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFProps) {
+export function BracketPDF({ tournament, teams, brackets, matches, translations: t }: BracketPDFProps) {
   const getTeamName = (teamId: string | null | undefined) => {
-    if (!teamId) return 'TBD';
-    const team = teams.find((t) => t.id === teamId);
+    if (!teamId) return t.tbd;
+    const team = teams.find((tm) => tm.id === teamId);
     return formatTeamName(team?.captain);
   };
 
@@ -153,13 +155,13 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
     const roundsFromEnd = totalRounds - roundNumber + 1;
     switch (roundsFromEnd) {
       case 1:
-        return 'Final';
+        return t.final;
       case 2:
-        return 'Semi-Final';
+        return t.semiFinal;
       case 3:
-        return 'Quarter-Final';
+        return t.quarterFinal;
       default:
-        return `Round ${roundNumber}`;
+        return `${t.round} ${roundNumber}`;
     }
   };
 
@@ -193,7 +195,7 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
             match.isBye ? styles.bye : {},
           ]}
         >
-          {match.isBye ? 'BYE' : getTeamName(match.team2Id)}
+          {match.isBye ? t.bye : getTeamName(match.team2Id)}
         </Text>
         <Text style={styles.score}>
           {match.isBye ? '' : match.team2Score !== null ? match.team2Score : ''}
@@ -225,7 +227,7 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
             <View style={styles.header}>
               <Text style={styles.title}>{tournament.name}</Text>
               <Text style={styles.subtitle}>
-                {bracket.isConsolante ? 'Consolante' : 'Concours'} {bracket.name} | {formatDate(tournament.startDate)}
+                {bracket.isConsolante ? t.consolante : t.concours} {bracket.name} | {formatDate(tournament.startDate)}
               </Text>
             </View>
 
@@ -284,19 +286,19 @@ export function BracketPDF({ tournament, teams, brackets, matches }: BracketPDFP
 
               {/* Winner column */}
               <View style={styles.roundColumn}>
-                <Text style={styles.roundLabel}>Winner</Text>
+                <Text style={styles.roundLabel}>{t.winner}</Text>
                 <View>
                   <View style={{ height: matchSpacingRound1 * Math.pow(2, numRounds - 1) }}>
                     <View style={{ marginTop: (matchSpacingRound1 * Math.pow(2, numRounds - 1) - MATCH_HEIGHT) / 2 }}>
                       {finalMatch ? (
                         <View style={styles.winnerBox}>
-                          <Text style={styles.winnerLabel}>Champion</Text>
+                          <Text style={styles.winnerLabel}>{t.champion}</Text>
                           <Text style={styles.winnerName}>{getTeamName(finalMatch.winnerId)}</Text>
                         </View>
                       ) : (
                         <View style={[styles.winnerBox, { backgroundColor: '#f5f5f5', borderColor: '#ccc' }]}>
-                          <Text style={styles.winnerLabel}>Champion</Text>
-                          <Text style={[styles.winnerName, { color: '#999' }]}>TBD</Text>
+                          <Text style={styles.winnerLabel}>{t.champion}</Text>
+                          <Text style={[styles.winnerName, { color: '#999' }]}>{t.tbd}</Text>
                         </View>
                       )}
                     </View>

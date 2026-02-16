@@ -21,6 +21,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
     formState: { errors },
     control,
   } = useForm<TournamentFormData>({
+    mode: 'onBlur',
     defaultValues: {
       name: '',
       teamComposition: 'mixed',
@@ -57,11 +58,13 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {/* Tournament Setup Section */}
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <h3 className="font-semibold text-gray-900">{t('tournaments.title')}</h3>
+          <h3 className="font-semibold text-gray-900">{t('tournaments.setup')}</h3>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* Name row + Type/Composition/Format row */}
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
             <Input
               label={t('tournaments.name')}
               {...register('name', { validate: validateRequired })}
@@ -99,7 +102,10 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               <SelectItem value="double">{t('tournaments.formatOptions.double')}</SelectItem>
               <SelectItem value="triple">{t('tournaments.formatOptions.triple')}</SelectItem>
             </Select>
+          </div>
 
+          {/* Dates, Rounds, Courts row */}
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
             <Input
               type="date"
               label={t('tournaments.startDate')}
@@ -117,28 +123,23 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
             <Input
               type="number"
               min={1}
-              label={t('tournaments.numberOfCourts')}
-              {...register('numberOfCourts', { valueAsNumber: true })}
-              error={errors.numberOfCourts?.message}
-            />
-
-            <Input
-              type="number"
-              min={1}
               max={20}
               label={t('tournaments.numberOfQualifyingRounds')}
               {...register('numberOfQualifyingRounds', { valueAsNumber: true })}
               error={errors.numberOfQualifyingRounds?.message}
             />
+
+            <Input
+              type="number"
+              min={1}
+              label={t('tournaments.numberOfCourts')}
+              {...register('numberOfCourts', { valueAsNumber: true })}
+              error={errors.numberOfCourts?.message}
+            />
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <h3 className="font-semibold text-gray-900">{t('tournaments.director')} & {t('tournaments.headUmpire')}</h3>
-
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* Umpire Information */}
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 pt-2">
             <Input
               label={t('tournaments.director')}
               {...register('director', { validate: validateRequired })}
@@ -183,11 +184,12 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
         </CardContent>
       </Card>
 
+      {/* Competition Structure Section */}
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <h3 className="font-semibold text-gray-900">{t('tournaments.pairingMethod')}</h3>
+          <h3 className="font-semibold text-gray-900">{t('tournaments.competitionStructure')}</h3>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
             <Select
               label={t('tournaments.pairingMethod')}
               value={watch('pairingMethod')}
@@ -197,7 +199,20 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               <SelectItem value="roundRobin">{t('tournaments.pairingMethodOptions.roundRobin')}</SelectItem>
             </Select>
 
-            <div className="flex items-center gap-2 pt-6">
+            <Select
+              label={t('tournaments.bracketSize')}
+              value={String(watch('bracketSize'))}
+              onValueChange={(v) => setValue('bracketSize', parseInt(v))}
+            >
+              <SelectItem value="4">4</SelectItem>
+              <SelectItem value="8">8</SelectItem>
+              <SelectItem value="16">16</SelectItem>
+              <SelectItem value="32">32</SelectItem>
+            </Select>
+          </div>
+
+          <div className="flex flex-wrap gap-x-8 gap-y-2 pt-2">
+            <div className="flex items-center gap-2">
               <input
                 type="checkbox"
                 id="regionAvoidance"
@@ -208,15 +223,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                 {t('tournaments.regionAvoidance')}
               </label>
             </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <h3 className="font-semibold text-gray-900">{t('brackets.title')}</h3>
-
-          <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -237,20 +244,9 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                 className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />
               <label htmlFor="advanceAll" className="text-sm text-gray-700">
-                {t('tournaments.advanceAll')}
+                {t('tournaments.advanceAllLabel')}
               </label>
             </div>
-
-            <Select
-              label={t('tournaments.bracketSize')}
-              value={String(watch('bracketSize'))}
-              onValueChange={(v) => setValue('bracketSize', parseInt(v))}
-            >
-              <SelectItem value="4">4</SelectItem>
-              <SelectItem value="8">8</SelectItem>
-              <SelectItem value="16">16</SelectItem>
-              <SelectItem value="32">32</SelectItem>
-            </Select>
           </div>
         </CardContent>
 

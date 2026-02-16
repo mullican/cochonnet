@@ -13,7 +13,6 @@ pub struct Tournament {
     pub director: String,
     pub head_umpire: String,
     pub format: String,
-    pub day_type: String,
     pub number_of_courts: i32,
     pub number_of_qualifying_rounds: i32,
     pub has_consolante: bool,
@@ -39,7 +38,6 @@ pub struct CreateTournamentData {
     pub head_umpire: String,
     pub additional_umpires: Option<Vec<String>>,
     pub format: String,
-    pub day_type: String,
     pub number_of_courts: i32,
     pub number_of_qualifying_rounds: i32,
     pub has_consolante: bool,
@@ -132,6 +130,7 @@ pub struct TeamStanding {
     pub points_against: i32,
     pub differential: i32,
     pub buchholz_score: f64,
+    pub fine_buchholz_score: f64,
     pub rank: i32,
 }
 

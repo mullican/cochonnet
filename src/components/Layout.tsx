@@ -35,17 +35,32 @@ export function Layout() {
                     <stop offset="0%" stopColor="white" stopOpacity="0.6" />
                     <stop offset="100%" stopColor="white" stopOpacity="0" />
                   </linearGradient>
+                  <linearGradient id="redGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#fca5a5" />
+                    <stop offset="25%" stopColor="#ef4444" />
+                    <stop offset="50%" stopColor="#dc2626" />
+                    <stop offset="75%" stopColor="#ef4444" />
+                    <stop offset="100%" stopColor="#b91c1c" />
+                  </linearGradient>
+                  <linearGradient id="redShineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="white" stopOpacity="0.5" />
+                    <stop offset="100%" stopColor="white" stopOpacity="0" />
+                  </linearGradient>
                 </defs>
-                {/* Main sphere */}
-                <circle cx="32" cy="32" r="28" fill="url(#steelGradient)" />
-                {/* Grooves */}
-                <path d="M8 26 Q32 22 56 26" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
-                <path d="M6 34 Q32 30 58 34" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
-                <path d="M8 42 Q32 38 56 42" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" />
-                {/* Highlight shine */}
-                <ellipse cx="22" cy="20" rx="10" ry="6" fill="url(#shineGradient)" />
+                {/* Main steel boule */}
+                <circle cx="32" cy="28" r="26" fill="url(#steelGradient)" />
+                {/* Grooves on boule */}
+                <path d="M10 22 Q32 18 54 22" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M8 30 Q32 26 56 30" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M10 38 Q32 34 54 38" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
+                {/* Highlight shine on boule */}
+                <ellipse cx="22" cy="18" rx="8" ry="5" fill="url(#shineGradient)" />
+                {/* Red cochonnet in front */}
+                <circle cx="32" cy="53" r="10" fill="url(#redGradient)" />
+                {/* Highlight shine on cochonnet */}
+                <ellipse cx="28" cy="49" rx="4" ry="2.5" fill="url(#redShineGradient)" />
               </svg>
-              <span className="text-xl font-bold text-gray-900">Pétanque</span>
+              <span className="text-xl font-bold text-gray-900">Cochonnet</span>
             </Link>
           </div>
           <div className="flex items-center gap-4">

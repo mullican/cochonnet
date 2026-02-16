@@ -33,12 +33,14 @@ pub fn run() {
             commands::update_team,
             commands::delete_team,
             commands::import_teams,
+            commands::delete_all_teams,
             commands::get_standings,
             // Qualifying round commands
             commands::get_qualifying_rounds,
             commands::get_games_for_round,
             commands::generate_pairings,
             commands::generate_all_qualifying_rounds,
+            commands::delete_all_qualifying_rounds,
             commands::update_game_score,
             commands::complete_round,
             // Bracket commands

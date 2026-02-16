@@ -57,8 +57,9 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
             <TableHead className="text-center">{t('pairing.losses')}</TableHead>
             <TableHead className="text-center">{t('pairing.pointsFor')}</TableHead>
             <TableHead className="text-center">{t('pairing.pointsAgainst')}</TableHead>
-            <TableHead className="text-center">{t('pairing.differential')}</TableHead>
             <TableHead className="text-center">{t('pairing.buchholz')}</TableHead>
+            <TableHead className="text-center">{t('pairing.fineBuchholz')}</TableHead>
+            <TableHead className="text-center">{t('pairing.differential')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -70,6 +71,8 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
               <TableCell className="text-center">{standing.losses}</TableCell>
               <TableCell className="text-center">{standing.pointsFor}</TableCell>
               <TableCell className="text-center">{standing.pointsAgainst}</TableCell>
+              <TableCell className="text-center">{standing.buchholzScore.toFixed(1)}</TableCell>
+              <TableCell className="text-center">{standing.fineBuchholzScore.toFixed(1)}</TableCell>
               <TableCell className="text-center">
                 <span
                   className={
@@ -84,7 +87,6 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
                   {standing.differential}
                 </span>
               </TableCell>
-              <TableCell className="text-center">{standing.buchholzScore.toFixed(1)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

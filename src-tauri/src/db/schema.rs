@@ -8,7 +8,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             team_composition TEXT NOT NULL CHECK (team_composition IN ('men', 'women', 'mixed', 'select')),
-            tournament_type TEXT NOT NULL CHECK (tournament_type IN ('regional', 'national', 'club')),
+            tournament_type TEXT NOT NULL CHECK (tournament_type IN ('regional', 'national', 'open', 'club')),
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL,
             director TEXT NOT NULL,
@@ -84,6 +84,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             points_against INTEGER NOT NULL DEFAULT 0,
             differential INTEGER NOT NULL DEFAULT 0,
             buchholz_score REAL NOT NULL DEFAULT 0,
+            fine_buchholz_score REAL NOT NULL DEFAULT 0,
             rank INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
             FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
@@ -188,6 +189,22 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
     if !has_court_column {
         conn.execute(
             "ALTER TABLE bracket_matches ADD COLUMN court_number INTEGER",
+            [],
+        ).ok();
+    }
+
+    // Migration: Add fine_buchholz_score column to team_standings if it doesn't exist
+    let has_fine_buchholz_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('team_standings') WHERE name='fine_buchholz_score'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_fine_buchholz_column {
+        conn.execute(
+            "ALTER TABLE team_standings ADD COLUMN fine_buchholz_score REAL NOT NULL DEFAULT 0",
             [],
         ).ok();
     }

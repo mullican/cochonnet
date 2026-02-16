@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, TeamStanding } from '../../types';
 import { formatTeamName } from '../../lib/utils';
+import type { PDFTranslations } from './ScoreSheetPDF';
 
 const styles = StyleSheet.create({
   page: {
@@ -47,10 +48,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   teamCol: {
-    width: '30%',
+    width: '21%',
   },
   statCol: {
-    width: '10%',
+    width: '9%',
     textAlign: 'center',
   },
   bold: {
@@ -68,9 +69,10 @@ interface StandingsPDFProps {
   tournament: Tournament;
   teams: Team[];
   standings: TeamStanding[];
+  translations: PDFTranslations;
 }
 
-export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps) {
+export function StandingsPDF({ tournament, teams, standings, translations: t }: StandingsPDFProps) {
   const getTeamName = (teamId: string) => {
     const team = teams.find((t) => t.id === teamId);
     return formatTeamName(team?.captain);
@@ -93,25 +95,26 @@ export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps
         <View style={styles.header}>
           <Text style={styles.title}>{tournament.name}</Text>
           <Text style={styles.subtitle}>
-            Standings as of {formatDate(new Date().toISOString())}
+            {t.standingsAsOf} {formatDate(new Date().toISOString())}
           </Text>
           {!tournament.advanceAll && (
             <Text style={styles.subtitle}>
-              Top {topTeamCount} teams advance to elimination rounds
+              {t.topTeamsAdvance.replace('{{count}}', String(topTeamCount))}
             </Text>
           )}
         </View>
 
         <View style={styles.table}>
           <View style={styles.tableHeader}>
-            <Text style={[styles.rankCol, styles.bold]}>Rank</Text>
-            <Text style={[styles.teamCol, styles.bold]}>Team</Text>
-            <Text style={[styles.statCol, styles.bold]}>W</Text>
-            <Text style={[styles.statCol, styles.bold]}>L</Text>
-            <Text style={[styles.statCol, styles.bold]}>PF</Text>
-            <Text style={[styles.statCol, styles.bold]}>PA</Text>
-            <Text style={[styles.statCol, styles.bold]}>+/-</Text>
+            <Text style={[styles.rankCol, styles.bold]}>{t.rank}</Text>
+            <Text style={[styles.teamCol, styles.bold]}>{t.team}</Text>
+            <Text style={[styles.statCol, styles.bold]}>{t.wins}</Text>
+            <Text style={[styles.statCol, styles.bold]}>{t.losses}</Text>
+            <Text style={[styles.statCol, styles.bold]}>{t.pointsFor}</Text>
+            <Text style={[styles.statCol, styles.bold]}>{t.pointsAgainst}</Text>
             <Text style={[styles.statCol, styles.bold]}>Buch</Text>
+            <Text style={[styles.statCol, styles.bold]}>FBuch</Text>
+            <Text style={[styles.statCol, styles.bold]}>{t.differential}</Text>
           </View>
 
           {sortedStandings.map((standing, index) => {
@@ -128,6 +131,8 @@ export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps
                 <Text style={styles.statCol}>{standing.losses}</Text>
                 <Text style={styles.statCol}>{standing.pointsFor}</Text>
                 <Text style={styles.statCol}>{standing.pointsAgainst}</Text>
+                <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
+                <Text style={styles.statCol}>{standing.fineBuchholzScore.toFixed(1)}</Text>
                 <Text
                   style={[
                     styles.statCol,
@@ -141,7 +146,6 @@ export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps
                   {standing.differential > 0 ? '+' : ''}
                   {standing.differential}
                 </Text>
-                <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
               </View>
             );
           })}
@@ -149,10 +153,10 @@ export function StandingsPDF({ tournament, teams, standings }: StandingsPDFProps
 
         <View style={{ marginTop: 20 }}>
           <Text style={{ fontSize: 8, color: '#666' }}>
-            W = Wins, L = Losses, PF = Points For, PA = Points Against, +/- = Point Differential, Buch = Buchholz Score
+            {t.legendWins}, {t.legendLosses}, {t.legendPointsFor}, {t.legendPointsAgainst}, {t.legendBuchholz}, {t.legendFineBuchholz}, {t.legendDifferential}
           </Text>
           <Text style={{ fontSize: 8, color: '#666', marginTop: 5 }}>
-            Tie-breaker order: Wins → Point Differential → Buchholz Score → Points For
+            {t.tiebreaker}
           </Text>
         </View>
       </Page>

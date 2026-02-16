@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { pdf } from '@react-pdf/renderer';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -9,6 +9,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle } from '../../componen
 import { ScoreSheetPDF } from './ScoreSheetPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
+import type { PDFTranslations } from './ScoreSheetPDF';
 import type { QualifyingGame } from '../../types';
 
 interface ExportViewProps {
@@ -28,6 +29,40 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   } = useTournamentStore();
 
   const [error, setError] = useState<string | null>(null);
+
+  // Get PDF translations from current language
+  const pdfTranslations: PDFTranslations = useMemo(() => ({
+    round: t('pdf.round'),
+    court: t('pdf.court'),
+    vs: t('pdf.vs'),
+    champion: t('pdf.champion'),
+    winner: t('pdf.winner'),
+    tbd: t('pdf.tbd'),
+    bye: t('pdf.bye'),
+    final: t('pdf.final'),
+    semiFinal: t('pdf.semiFinal'),
+    quarterFinal: t('pdf.quarterFinal'),
+    rank: t('pdf.rank'),
+    team: t('pdf.team'),
+    wins: t('pdf.wins'),
+    losses: t('pdf.losses'),
+    pointsFor: t('pdf.pointsFor'),
+    pointsAgainst: t('pdf.pointsAgainst'),
+    differential: t('pdf.differential'),
+    concours: t('pdf.concours'),
+    consolante: t('pdf.consolante'),
+    standings: t('pdf.standings'),
+    standingsAsOf: t('pdf.standingsAsOf'),
+    topTeamsAdvance: t('pdf.topTeamsAdvance'),
+    legendWins: t('pdf.legendWins'),
+    legendLosses: t('pdf.legendLosses'),
+    legendPointsFor: t('pdf.legendPointsFor'),
+    legendPointsAgainst: t('pdf.legendPointsAgainst'),
+    legendDifferential: t('pdf.legendDifferential'),
+    legendBuchholz: t('pdf.legendBuchholz'),
+    legendFineBuchholz: t('pdf.legendFineBuchholz'),
+    tiebreaker: t('pdf.tiebreaker'),
+  }), [t]);
 
   // Helper to write file, removing existing file first if needed
   const writeFileOverwrite = async (path: string, data: Uint8Array) => {
@@ -90,6 +125,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           teams={teams}
           rounds={qualifyingRounds}
           games={allGames}
+          translations={pdfTranslations}
         />
       );
 
@@ -121,6 +157,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
         tournament={currentTournament}
         teams={teams}
         standings={standings}
+        translations={pdfTranslations}
       />
     );
     await downloadPDF(doc, `${currentTournament.name}_standings.pdf`);
@@ -135,6 +172,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
         teams={teams}
         brackets={brackets}
         matches={bracketMatches}
+        translations={pdfTranslations}
       />
     );
     await downloadPDF(doc, `${currentTournament.name}_brackets.pdf`);

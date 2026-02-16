@@ -9,6 +9,11 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from '../../components/ui';
 import { RoundGames } from './RoundGames';
 import { StandingsTable } from './StandingsTable';
@@ -21,14 +26,18 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   const { t } = useTranslation();
   const {
     qualifyingRounds,
+    qualifyingGames,
     loading,
     fetchQualifyingRounds,
     generateAllQualifyingRounds,
+    deleteAllQualifyingRounds,
     fetchStandings,
     teams,
   } = useTournamentStore();
 
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQualifyingRounds(tournamentId);
@@ -53,21 +62,49 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   };
 
+  const handleDeleteRounds = async () => {
+    setDeleteError(null);
+    try {
+      await deleteAllQualifyingRounds(tournamentId);
+      setSelectedRoundId(null);
+      setDeleteDialogOpen(false);
+    } catch (error) {
+      setDeleteError(String(error));
+    }
+  };
+
   const canGeneratePairings = teams.length >= 2;
   const hasRounds = qualifyingRounds.length > 0;
+
+  // Check if any games have scores - if so, deletion is not allowed
+  const hasScores = qualifyingGames.some(
+    (g) => g.team1Score !== null || g.team2Score !== null
+  );
+  const canDeleteRounds = hasRounds && !hasScores;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">{t('pairing.title')}</h2>
-        {!hasRounds && (
-          <Button
-            onClick={handleGeneratePairings}
-            disabled={!canGeneratePairings || loading}
-          >
-            {t('pairing.generatePairings')}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {hasRounds && canDeleteRounds && (
+            <Button
+              variant="danger"
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={loading}
+            >
+              {t('pairing.deleteRounds')}
+            </Button>
+          )}
+          {!hasRounds && (
+            <Button
+              onClick={handleGeneratePairings}
+              disabled={!canGeneratePairings || loading}
+            >
+              {t('pairing.generatePairings')}
+            </Button>
+          )}
+        </div>
       </div>
 
       {!canGeneratePairings && (
@@ -126,6 +163,35 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
           </TabsContent>
         </Tabs>
       )}
+
+      {/* Delete Rounds Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('pairing.deleteRounds')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-500">{t('pairing.deleteRoundsConfirm')}</p>
+          {deleteError && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setDeleteError(null);
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" onClick={handleDeleteRounds} disabled={loading}>
+              {t('common.delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

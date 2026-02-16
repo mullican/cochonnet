@@ -72,6 +72,7 @@ export interface TeamStanding {
   pointsAgainst: number;
   differential: number;
   buchholzScore: number;
+  fineBuchholzScore: number;
   rank: number;
 }
 

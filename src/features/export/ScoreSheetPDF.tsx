@@ -2,6 +2,39 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, QualifyingRound, QualifyingGame } from '../../types';
 import { formatTeamName } from '../../lib/utils';
 
+export interface PDFTranslations {
+  round: string;
+  court: string;
+  vs: string;
+  champion: string;
+  winner: string;
+  tbd: string;
+  bye: string;
+  final: string;
+  semiFinal: string;
+  quarterFinal: string;
+  rank: string;
+  team: string;
+  wins: string;
+  losses: string;
+  pointsFor: string;
+  pointsAgainst: string;
+  differential: string;
+  concours: string;
+  consolante: string;
+  standings: string;
+  standingsAsOf: string;
+  topTeamsAdvance: string;
+  legendWins: string;
+  legendLosses: string;
+  legendPointsFor: string;
+  legendPointsAgainst: string;
+  legendDifferential: string;
+  legendBuchholz: string;
+  legendFineBuchholz: string;
+  tiebreaker: string;
+}
+
 // Card dimensions - 3 columns x 4 rows = 12 cards per page
 // A4 is 595 x 842 points, with padding we have ~565 x 812 usable
 const CARD_WIDTH = 175;
@@ -10,6 +43,22 @@ const CARD_MARGIN = 4;
 const CARDS_PER_ROW = 3;
 const CARDS_PER_COL = 4;
 const CARDS_PER_PAGE = CARDS_PER_ROW * CARDS_PER_COL;
+
+// Colors for each round (avoiding light colors for readability)
+const ROUND_COLORS = [
+  '#1976d2', // Blue
+  '#c62828', // Red
+  '#2e7d32', // Green
+  '#6a1b9a', // Purple
+  '#e65100', // Orange
+  '#00838f', // Teal
+  '#4527a0', // Deep Purple
+  '#ad1457', // Pink
+  '#1565c0', // Dark Blue
+  '#558b2f', // Light Green
+  '#d84315', // Deep Orange
+  '#00695c', // Dark Teal
+];
 
 const styles = StyleSheet.create({
   page: {
@@ -107,30 +156,56 @@ interface ScoreSheetPDFProps {
   teams: Team[];
   rounds: QualifyingRound[];
   games: QualifyingGame[];
+  translations: PDFTranslations;
 }
 
-export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPDFProps) {
+export function ScoreSheetPDF({ tournament, teams, rounds, games, translations: t }: ScoreSheetPDFProps) {
   const getTeamName = (teamId: string | null | undefined) => {
-    if (!teamId) return 'TBD';
+    if (!teamId) return t.tbd;
     const team = teams.find((t) => t.id === teamId);
     return formatTeamName(team?.captain);
   };
 
+  const getRoundColor = (roundNumber: number) => {
+    return ROUND_COLORS[(roundNumber - 1) % ROUND_COLORS.length];
+  };
+
   // Build list of all game cards (excluding BYE games)
-  const gameCards: { round: QualifyingRound; game: QualifyingGame }[] = [];
+  // Each game gets 2 cards (one for each team)
+  // Copy 0: team1 on top, Copy 1: team2 on top (reversed)
+  // Cards are sorted by first team name, then round number
+  interface GameCard {
+    round: QualifyingRound;
+    game: QualifyingGame;
+    copyIndex: number;
+    firstTeamName: string; // The team shown on top of the card
+  }
+
+  const gameCards: GameCard[] = [];
 
   rounds.forEach((round) => {
-    const roundGames = games
-      .filter((g) => g.roundId === round.id && !g.isBye)
-      .sort((a, b) => a.courtNumber - b.courtNumber);
+    const roundGames = games.filter((g) => g.roundId === round.id && !g.isBye);
 
     roundGames.forEach((game) => {
-      gameCards.push({ round, game });
+      const team1Name = getTeamName(game.team1Id);
+      const team2Name = getTeamName(game.team2Id);
+
+      // Copy 0: team1 on top
+      gameCards.push({ round, game, copyIndex: 0, firstTeamName: team1Name });
+      // Copy 1: team2 on top (reversed order)
+      gameCards.push({ round, game, copyIndex: 1, firstTeamName: team2Name });
     });
   });
 
+  // Sort cards by first team name, then by round number
+  gameCards.sort((a, b) => {
+    const nameCompare = a.firstTeamName.localeCompare(b.firstTeamName);
+    if (nameCompare !== 0) return nameCompare;
+    return a.round.roundNumber - b.round.roundNumber;
+  });
+
   // Split into pages
-  const pages: { round: QualifyingRound; game: QualifyingGame }[][] = [];
+  const pages: GameCard[][] = [];
   for (let i = 0; i < gameCards.length; i += CARDS_PER_PAGE) {
     pages.push(gameCards.slice(i, i + CARDS_PER_PAGE));
   }
@@ -145,30 +220,41 @@ export function ScoreSheetPDF({ tournament, teams, rounds, games }: ScoreSheetPD
       {pages.map((pageCards, pageIndex) => (
         <Page key={pageIndex} size="A4" style={styles.page}>
           <View style={styles.cardGrid}>
-            {pageCards.map(({ round, game }) => (
-              <View key={game.id} style={styles.card} wrap={false}>
+            {pageCards.map(({ round, game, copyIndex }) => (
+              <View key={`${game.id}-${copyIndex}`} style={styles.card} wrap={false}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.roundBadge}>Round {round.roundNumber}</Text>
-                  <Text style={styles.courtBadge}>Court {game.courtNumber}</Text>
+                  <Text style={[styles.roundBadge, { backgroundColor: getRoundColor(round.roundNumber) }]}>
+                    {t.round} {round.roundNumber}
+                  </Text>
+                  <Text style={styles.courtBadge}>{t.court} {game.courtNumber}</Text>
                 </View>
 
                 <View style={styles.teamSection}>
+                  {/* Copy 0: team1 on top, Copy 1: team2 on top */}
                   <View style={styles.teamRow}>
-                    <Text style={styles.teamName}>{getTeamName(game.team1Id)}</Text>
+                    <Text style={styles.teamName}>
+                      {copyIndex === 0 ? getTeamName(game.team1Id) : getTeamName(game.team2Id)}
+                    </Text>
                     <View style={styles.scoreBox}>
                       <Text style={styles.scoreText}>
-                        {game.team1Score !== null ? game.team1Score : ''}
+                        {copyIndex === 0
+                          ? (game.team1Score !== null ? game.team1Score : '')
+                          : (game.team2Score !== null ? game.team2Score : '')}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={styles.vsText}>vs</Text>
+                  <Text style={styles.vsText}>{t.vs}</Text>
 
                   <View style={styles.teamRow}>
-                    <Text style={styles.teamName}>{getTeamName(game.team2Id)}</Text>
+                    <Text style={styles.teamName}>
+                      {copyIndex === 0 ? getTeamName(game.team2Id) : getTeamName(game.team1Id)}
+                    </Text>
                     <View style={styles.scoreBox}>
                       <Text style={styles.scoreText}>
-                        {game.team2Score !== null ? game.team2Score : ''}
+                        {copyIndex === 0
+                          ? (game.team2Score !== null ? game.team2Score : '')
+                          : (game.team1Score !== null ? game.team1Score : '')}
                       </Text>
                     </View>
                   </View>
