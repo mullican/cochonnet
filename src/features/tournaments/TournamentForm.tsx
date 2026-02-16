@@ -240,16 +240,17 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
           </div>
 
           <div className="pt-4">
-            <h4 className="text-sm font-medium text-gray-700 mb-3">{t('tournaments.ameliaIslandOptions')}</h4>
+            <h4 className={`text-sm font-medium mb-3 ${hasQualifyingRounds ? 'text-gray-400' : 'text-gray-700'}`}>{t('tournaments.ameliaIslandOptions')}</h4>
             <div className="flex flex-wrap gap-x-8 gap-y-2">
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   id="regionAvoidance"
                   {...register('regionAvoidance')}
-                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                  disabled={hasQualifyingRounds}
                 />
-                <label htmlFor="regionAvoidance" className="text-sm text-gray-700">
+                <label htmlFor="regionAvoidance" className={`text-sm ${hasQualifyingRounds ? 'text-gray-400' : 'text-gray-700'}`}>
                   {t('tournaments.regionAvoidance')}
                 </label>
               </div>
@@ -259,9 +260,10 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
                   type="checkbox"
                   id="advanceAll"
                   {...register('advanceAll')}
-                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                  disabled={hasQualifyingRounds}
                 />
-                <label htmlFor="advanceAll" className="text-sm text-gray-700">
+                <label htmlFor="advanceAll" className={`text-sm ${hasQualifyingRounds ? 'text-gray-400' : 'text-gray-700'}`}>
                   {t('tournaments.advanceAllLabel')}
                 </label>
               </div>
