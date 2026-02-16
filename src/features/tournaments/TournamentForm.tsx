@@ -157,9 +157,19 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
-              {t('tournaments.additionalUmpires')}
-            </label>
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium text-gray-700">
+                {t('tournaments.additionalUmpires')}
+              </label>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => append({ value: '' })}
+              >
+                {t('common.add')}
+              </Button>
+            </div>
             {fields.map((field, index) => (
               <div key={field.id} className="flex gap-2">
                 <Input
@@ -175,14 +185,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
                 </Button>
               </div>
             ))}
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => append({ value: '' })}
-            >
-              {t('common.add')}
-            </Button>
           </div>
         </CardContent>
       </Card>
