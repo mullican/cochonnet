@@ -23,21 +23,42 @@ This is a **Tauri 2** desktop application with:
 - `src-tauri/src/commands/teams.rs` - Team operations including CSV import
 - CSV import expects: captain, player2, player3 (optional), region (optional), club (optional)
 
-### Swiss System Qualifying
+### Qualifying Rounds
 - `src/features/pairing/QualifyingRounds.tsx` - Main qualifying rounds view
 - `src/features/pairing/StandingsTable.tsx` - Standings display table
 - `src-tauri/src/commands/qualifying.rs` - Core pairing and scoring logic
-  - `generate_swiss_pairings()` - Swiss pairing algorithm (lines ~372-490)
-  - `calculate_buchholz_and_ranks()` - Standings calculation (lines ~751-833)
-  - `complete_round()` - Score processing (lines ~587-690)
 
-### Tiebreaker Algorithm
-Located in `calculate_buchholz_and_ranks()`:
-1. **Wins** (descending)
-2. **Buchholz Score** - sum of opponents' wins
-3. **Fine Buchholz Score** - sum of opponents' Buchholz scores
-4. **Point Differential** - total points scored minus points allowed
-5. **Random** - random u64 for final tiebreaker
+**Supported Pairing Methods:**
+
+| Method | Generation | Ranking | Description |
+|--------|------------|---------|-------------|
+| **Swiss** | Round-by-round | Buchholz | Teams with similar records play each other. Prior round must complete before generating next. |
+| **Swiss Hotel** | All at once | Point Quotient | Random pairings pre-generated upfront with graduated constraints. |
+| **Round Robin** | All at once | Point Quotient | Berger circle method - each team plays every other team. |
+| **Pool Play** | Round-by-round | Point Quotient | Fixed 3 rounds: R1 random, R2 winners vs winners, R3 only 1-1 teams play. Teams with 2 losses eliminated. |
+
+**Key Functions in `qualifying.rs`:**
+- `generate_swiss_pairings()` - Pairs teams by similar win records
+- `generate_swiss_hotel_pairings()` - Random pairing with constraints
+- `generate_pool_play_round()` - Round-specific Pool Play logic
+- `calculate_buchholz_and_ranks()` - Swiss tiebreaker calculation
+- `calculate_point_quotient_ranks()` - Point quotient tiebreaker calculation
+- `complete_round()` - Score processing and rank updates
+
+### Tiebreaker Algorithms
+
+**Swiss System** (Buchholz-based):
+1. Wins (descending)
+2. Buchholz Score - sum of opponents' wins
+3. Fine Buchholz Score - sum of opponents' Buchholz scores
+4. Point Differential
+5. Random tiebreaker
+
+**Swiss Hotel / Round Robin / Pool Play** (Point Quotient-based):
+1. Wins (descending)
+2. Point Differential
+3. Point Quotient - points_for / points_against
+4. Random tiebreaker
 
 ### Elimination Brackets
 - `src/features/brackets/BracketView.tsx` - Main bracket display
@@ -69,8 +90,10 @@ Located in `src-tauri/src/db/schema.rs`:
 **Key Standings Fields:**
 - wins, losses, points_for, points_against
 - differential (computed: points_for - points_against)
-- buchholz_score (sum of opponent wins)
-- fine_buchholz_score (sum of opponent buchholz scores)
+- buchholz_score (sum of opponent wins) - used by Swiss
+- fine_buchholz_score (sum of opponent buchholz scores) - used by Swiss
+- point_quotient (points_for / points_against) - used by Swiss Hotel, Round Robin, Pool Play
+- is_eliminated (boolean) - used by Pool Play for teams with 2 losses
 - rank (final computed rank)
 
 ## State Management
@@ -117,6 +140,14 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 
 ## Known Issues / Warnings
 
-- Some unused variables in `qualifying.rs` related to court history (lines 550-555)
+- Some unused variables in `qualifying.rs` related to court history in `assign_courts()`
 - Some unused structs in `models/mod.rs` (StandingWithTeam, PairingHistory, CourtHistory)
 - Large JS bundle (~2MB) could benefit from code splitting
+
+## Tournament Form Defaults
+
+- Tournament Type: Club
+- Team Composition: Select
+- Format: Double
+- Pairing Method: Swiss
+- All Teams Advance: Unchecked
