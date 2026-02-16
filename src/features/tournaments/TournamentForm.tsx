@@ -190,7 +190,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
         <CardContent className="space-y-4 pt-6">
           <h3 className="font-semibold text-gray-900">{t('tournaments.competitionStructure')}</h3>
 
-          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4 items-end">
             <Select
               label={t('tournaments.pairingMethod')}
               value={watch('pairingMethod')}
@@ -218,22 +218,8 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               <SelectItem value="16">16</SelectItem>
               <SelectItem value="32">32</SelectItem>
             </Select>
-          </div>
 
-          <div className="flex flex-wrap gap-x-8 gap-y-2 pt-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="regionAvoidance"
-                {...register('regionAvoidance')}
-                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              />
-              <label htmlFor="regionAvoidance" className="text-sm text-gray-700">
-                {t('tournaments.regionAvoidance')}
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pb-2">
               <input
                 type="checkbox"
                 id="hasConsolante"
@@ -244,17 +230,34 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                 {t('tournaments.consolante')}
               </label>
             </div>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="advanceAll"
-                {...register('advanceAll')}
-                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              />
-              <label htmlFor="advanceAll" className="text-sm text-gray-700">
-                {t('tournaments.advanceAllLabel')}
-              </label>
+          <div className="pt-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-3">{t('tournaments.ameliaIslandOptions')}</h4>
+            <div className="flex flex-wrap gap-x-8 gap-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="regionAvoidance"
+                  {...register('regionAvoidance')}
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <label htmlFor="regionAvoidance" className="text-sm text-gray-700">
+                  {t('tournaments.regionAvoidance')}
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="advanceAll"
+                  {...register('advanceAll')}
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <label htmlFor="advanceAll" className="text-sm text-gray-700">
+                  {t('tournaments.advanceAllLabel')}
+                </label>
+              </div>
             </div>
           </div>
         </CardContent>
