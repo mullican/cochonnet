@@ -243,5 +243,56 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         ).ok();
     }
 
+    // Migration: Update pairing_method CHECK constraint to include new formats
+    // SQLite doesn't support ALTER TABLE to modify constraints, so we need to recreate the table
+    // Check if the old constraint exists by looking at the table schema
+    let table_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tournaments'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    // If the table exists and doesn't include 'swissHotel' in the constraint, migrate it
+    if !table_sql.is_empty() && !table_sql.contains("swissHotel") {
+        conn.execute_batch(
+            r#"
+            -- Create new table with updated constraint
+            CREATE TABLE tournaments_new (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                team_composition TEXT NOT NULL CHECK (team_composition IN ('men', 'women', 'mixed', 'select')),
+                tournament_type TEXT NOT NULL CHECK (tournament_type IN ('regional', 'national', 'open', 'club')),
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                director TEXT NOT NULL,
+                head_umpire TEXT NOT NULL,
+                format TEXT NOT NULL CHECK (format IN ('single', 'double', 'triple')),
+                day_type TEXT NOT NULL CHECK (day_type IN ('single', 'two')),
+                number_of_courts INTEGER NOT NULL,
+                number_of_qualifying_rounds INTEGER NOT NULL DEFAULT 5,
+                has_consolante INTEGER NOT NULL DEFAULT 0,
+                advance_all INTEGER NOT NULL DEFAULT 1,
+                advance_count INTEGER,
+                bracket_size INTEGER NOT NULL DEFAULT 16,
+                pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay')),
+                region_avoidance INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Copy data from old table
+            INSERT INTO tournaments_new SELECT * FROM tournaments;
+
+            -- Drop old table
+            DROP TABLE tournaments;
+
+            -- Rename new table
+            ALTER TABLE tournaments_new RENAME TO tournaments;
+            "#,
+        ).ok();
+    }
+
     Ok(())
 }
