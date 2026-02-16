@@ -9,13 +9,27 @@ export function TournamentEdit() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { currentTournament, loading, fetchTournament, updateTournament } = useTournamentStore();
+  const {
+    currentTournament,
+    loading,
+    fetchTournament,
+    updateTournament,
+    qualifyingRounds,
+    brackets,
+    fetchQualifyingRounds,
+    fetchBrackets,
+  } = useTournamentStore();
 
   useEffect(() => {
     if (id) {
       fetchTournament(id);
+      fetchQualifyingRounds(id);
+      fetchBrackets(id);
     }
-  }, [id, fetchTournament]);
+  }, [id, fetchTournament, fetchQualifyingRounds, fetchBrackets]);
+
+  const hasQualifyingRounds = qualifyingRounds.length > 0;
+  const hasBrackets = brackets.length > 0;
 
   const handleSubmit = async (data: TournamentFormData) => {
     if (!id) return;
@@ -100,6 +114,8 @@ export function TournamentEdit() {
         onSubmit={handleSubmit}
         onCancel={() => navigate(`/tournaments/${id}`)}
         isLoading={loading}
+        hasQualifyingRounds={hasQualifyingRounds}
+        hasBrackets={hasBrackets}
       />
     </div>
   );

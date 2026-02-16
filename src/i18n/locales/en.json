@@ -78,7 +78,7 @@
     "pairingMethod": "Qualifier Format",
     "pairingMethodOptions": {
       "swiss": "Swiss System",
-      "swissHotel": "Swiss Hotel",
+      "swissHotel": "Rounds (Swiss Hotel)",
       "roundRobin": "Round Robin",
       "poolPlay": "Pool Play"
     },

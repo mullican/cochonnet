@@ -8,9 +8,11 @@ interface TournamentFormProps {
   onSubmit: (data: TournamentFormData) => void;
   onCancel: () => void;
   isLoading?: boolean;
+  hasQualifyingRounds?: boolean;
+  hasBrackets?: boolean;
 }
 
-export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }: TournamentFormProps) {
+export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, hasQualifyingRounds = false, hasBrackets = false }: TournamentFormProps) {
   const { t } = useTranslation();
 
   const {
@@ -201,6 +203,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                   setValue('numberOfQualifyingRounds', 3);
                 }
               }}
+              disabled={hasQualifyingRounds}
             >
               <SelectItem value="swiss">{t('tournaments.pairingMethodOptions.swiss')}</SelectItem>
               <SelectItem value="swissHotel">{t('tournaments.pairingMethodOptions.swissHotel')}</SelectItem>
@@ -212,6 +215,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
               label={t('tournaments.bracketSize')}
               value={String(watch('bracketSize'))}
               onValueChange={(v) => setValue('bracketSize', parseInt(v))}
+              disabled={hasBrackets}
             >
               <SelectItem value="4">4</SelectItem>
               <SelectItem value="8">8</SelectItem>
@@ -224,9 +228,10 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading }:
                 type="checkbox"
                 id="hasConsolante"
                 {...register('hasConsolante')}
-                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                disabled={hasBrackets}
               />
-              <label htmlFor="hasConsolante" className="text-sm text-gray-700">
+              <label htmlFor="hasConsolante" className={`text-sm ${hasBrackets ? 'text-gray-400' : 'text-gray-700'}`}>
                 {t('tournaments.consolante')}
               </label>
             </div>

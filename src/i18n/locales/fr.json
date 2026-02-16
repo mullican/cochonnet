@@ -78,7 +78,7 @@
     "pairingMethod": "Format de Qualification",
     "pairingMethodOptions": {
       "swiss": "Système Suisse",
-      "swissHotel": "Suisse Hôtel",
+      "swissHotel": "Rondes",
       "roundRobin": "Toutes Rondes",
       "poolPlay": "Poules"
     },
