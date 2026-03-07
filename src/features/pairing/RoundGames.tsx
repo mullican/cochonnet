@@ -31,18 +31,40 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
 
   useEffect(() => {
+    // Reset scores when switching rounds
+    setScores({});
     fetchGamesForRound(roundId);
   }, [roundId, fetchGamesForRound]);
 
   useEffect(() => {
-    const initialScores: Record<string, { team1: string; team2: string }> = {};
-    qualifyingGames.forEach((game) => {
-      initialScores[game.id] = {
-        team1: game.team1Score?.toString() || '',
-        team2: game.team2Score?.toString() || '',
-      };
+    setScores((prevScores) => {
+      const newScores: Record<string, { team1: string; team2: string }> = {};
+      let hasChanges = false;
+
+      qualifyingGames.forEach((game) => {
+        const existingScore = prevScores[game.id];
+        const backendTeam1 = game.team1Score?.toString() || '';
+        const backendTeam2 = game.team2Score?.toString() || '';
+
+        if (existingScore) {
+          // Keep existing local scores to preserve user edits
+          newScores[game.id] = existingScore;
+        } else {
+          // Initialize scores for new games
+          hasChanges = true;
+          newScores[game.id] = {
+            team1: backendTeam1,
+            team2: backendTeam2,
+          };
+        }
+      });
+
+      // Only update state if there are actual changes
+      if (!hasChanges && Object.keys(newScores).length === Object.keys(prevScores).length) {
+        return prevScores;
+      }
+      return newScores;
     });
-    setScores(initialScores);
   }, [qualifyingGames]);
 
   const getTeamName = (teamId: string | null | undefined) => {
