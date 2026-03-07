@@ -20,7 +20,6 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const {
     qualifyingGames,
     teams,
-    loading,
     fetchGamesForRound,
     updateGameScore,
     completeRound,
@@ -29,11 +28,13 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   } = useTournamentStore();
 
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
     // Reset scores when switching rounds
     setScores({});
-    fetchGamesForRound(roundId);
+    setInitialLoading(true);
+    fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
   }, [roundId, fetchGamesForRound]);
 
   useEffect(() => {
@@ -129,7 +130,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     }
   };
 
-  if (loading) {
+  if (initialLoading) {
     return <div className="text-center py-4 text-gray-500">{t('common.loading')}</div>;
   }
 
