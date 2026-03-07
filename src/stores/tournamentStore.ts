@@ -393,6 +393,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
         ),
         loading: false,
       }));
+      // Refresh brackets list in case a consolante bracket was created
+      const currentTournament = get().currentTournament;
+      if (currentTournament) {
+        await get().fetchBrackets(currentTournament.id);
+      }
     } catch (error) {
       set({ error: String(error), loading: false });
       throw error;

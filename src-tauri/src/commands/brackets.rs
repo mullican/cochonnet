@@ -607,7 +607,8 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
     }
 
     // Check if consolante bracket already exists
-    let consolante_name = format!("{}A", bracket_name);
+    // Consolante name doubles the bracket letter: A -> AA, B -> BB, etc.
+    let consolante_name = format!("{}{}", bracket_name, bracket_name);
     let consolante_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM brackets WHERE tournament_id = ?1 AND name = ?2",
