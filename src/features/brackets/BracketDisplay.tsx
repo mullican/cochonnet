@@ -179,7 +179,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                         <CardContent className="p-2 h-full flex flex-col justify-between">
                           {/* Court number */}
                           <div className="text-xs text-gray-400 text-center">
-                            {match.courtNumber ? `Court ${match.courtNumber}` : ''}
+                            {match.courtNumber ? `${t('pairing.court')} ${match.courtNumber}` : ''}
                           </div>
 
                           {/* Team 1 */}
@@ -329,7 +329,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
             <div className="space-y-4">
               {selectedMatch.courtNumber && (
                 <div className="text-sm text-gray-500 text-center">
-                  Court {selectedMatch.courtNumber}
+                  {t('pairing.court')} {selectedMatch.courtNumber}
                 </div>
               )}
               <div className="flex items-center gap-4">
