@@ -47,6 +47,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Update version from tag (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Updating version to $VERSION"
+          npm version $VERSION --no-git-tag-version
+          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+      - name: Update version from tag (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = $env:GITHUB_REF_NAME -replace '^v', ''
+          Write-Host "Updating version to $VERSION"
+          npm version $VERSION --no-git-tag-version
+          $json = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $json.version = $VERSION
+          $json | ConvertTo-Json -Depth 100 | Set-Content src-tauri/tauri.conf.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
