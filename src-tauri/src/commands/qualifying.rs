@@ -178,11 +178,11 @@ fn generate_single_round(
     tournament_id: &str,
 ) -> Result<QualifyingRound, String> {
     // Get tournament info
-    let (pairing_method, number_of_courts, region_avoidance): (String, i32, bool) = conn
+    let (pairing_method, region_avoidance): (String, bool) = conn
         .query_row(
-            "SELECT pairing_method, number_of_courts, region_avoidance FROM tournaments WHERE id = ?1",
+            "SELECT pairing_method, region_avoidance FROM tournaments WHERE id = ?1",
             params![tournament_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i32>(2)? != 0)),
+            |row| Ok((row.get(0)?, row.get::<_, i32>(1)? != 0)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -266,29 +266,6 @@ fn generate_single_round(
         .flat_map(|(t1, t2)| vec![(t1.clone(), t2.clone()), (t2, t1)])
         .collect();
 
-    // Get court history for rotation
-    let mut court_stmt = conn
-        .prepare("SELECT team_id, court_number FROM court_history WHERE tournament_id = ?1")
-        .map_err(|e| e.to_string())?;
-
-    let court_history: HashMap<String, Vec<i32>> = {
-        let mut map: HashMap<String, Vec<i32>> = HashMap::new();
-        let rows = court_stmt
-            .query_map(params![tournament_id], |row| {
-                let team_id: String = row.get(0)?;
-                let court: i32 = row.get(1)?;
-                Ok((team_id, court))
-            })
-            .map_err(|e| e.to_string())?;
-
-        for row in rows {
-            if let Ok((team_id, court)) = row {
-                map.entry(team_id).or_default().push(court);
-            }
-        }
-        map
-    };
-
     // Get standings for Swiss pairing
     let tournament_id_owned = tournament_id.to_string();
     let mut standings_stmt = conn
@@ -335,7 +312,7 @@ fn generate_single_round(
     };
 
     // Assign courts with rotation
-    let games = assign_courts(pairings, number_of_courts, &court_history)?;
+    let games = assign_courts(pairings)?;
 
     // Create the round
     let round_id = Uuid::new_v4().to_string();
@@ -873,26 +850,13 @@ fn pair_teams_with_constraints(
 
 fn assign_courts(
     pairings: Vec<(String, Option<String>)>,
-    number_of_courts: i32,
-    court_history: &HashMap<String, Vec<i32>>,
 ) -> Result<Vec<(Option<String>, Option<String>)>, String> {
-    let mut games: Vec<(Option<String>, Option<String>)> = Vec::new();
-
-    for (i, (t1, t2)) in pairings.iter().enumerate() {
-        let court = ((i as i32) % number_of_courts) + 1;
-
-        // Try to avoid courts teams have used recently
-        // This is a simplified version - could be optimized
-        let t1_courts = court_history.get(t1).cloned().unwrap_or_default();
-        let t2_courts = t2
-            .as_ref()
-            .and_then(|id| court_history.get(id))
-            .cloned()
-            .unwrap_or_default();
-
-        // For now, just use sequential assignment with shuffle from Swiss
-        games.push((Some(t1.clone()), t2.clone()));
-    }
+    // Court numbers are assigned sequentially by the caller, based on each
+    // game's position in this list.
+    let games = pairings
+        .into_iter()
+        .map(|(t1, t2)| (Some(t1), t2))
+        .collect();
 
     Ok(games)
 }

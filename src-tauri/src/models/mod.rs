@@ -140,22 +140,6 @@ pub struct TeamStanding {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StandingWithTeam {
-    pub id: String,
-    pub tournament_id: String,
-    pub team_id: String,
-    pub wins: i32,
-    pub losses: i32,
-    pub points_for: i32,
-    pub points_against: i32,
-    pub differential: i32,
-    pub buchholz_score: f64,
-    pub rank: i32,
-    pub team: Team,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Bracket {
     pub id: String,
     pub tournament_id: String,
@@ -203,22 +187,3 @@ pub struct MatchWithTeams {
     pub winner: Option<Team>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PairingHistory {
-    pub id: String,
-    pub tournament_id: String,
-    pub team1_id: String,
-    pub team2_id: String,
-    pub round_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CourtHistory {
-    pub id: String,
-    pub tournament_id: String,
-    pub team_id: String,
-    pub court_number: i32,
-    pub round_id: String,
-}

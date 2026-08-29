@@ -140,8 +140,6 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 
 ## Known Issues / Warnings
 
-- Some unused variables in `qualifying.rs` related to court history in `assign_courts()`
-- Some unused structs in `models/mod.rs` (StandingWithTeam, PairingHistory, CourtHistory)
 - Large JS bundle (~2MB) could benefit from code splitting
 
 ## Tournament Form Defaults
