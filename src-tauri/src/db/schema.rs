@@ -39,6 +39,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS teams (
             id TEXT PRIMARY KEY,
             tournament_id TEXT NOT NULL,
+            team_number INTEGER NOT NULL DEFAULT 0,
             captain TEXT NOT NULL,
             player2 TEXT NOT NULL,
             player3 TEXT,
@@ -292,6 +293,47 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             ALTER TABLE tournaments_new RENAME TO tournaments;
             "#,
         ).ok();
+    }
+
+    // Migration: Add team_number column to teams if it doesn't exist
+    let has_team_number_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('teams') WHERE name='team_number'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_team_number_column {
+        conn.execute(
+            "ALTER TABLE teams ADD COLUMN team_number INTEGER NOT NULL DEFAULT 0",
+            [],
+        ).ok();
+
+        // Backfill existing teams with sequential numbers, per tournament,
+        // ordered by creation order so pre-existing rosters get stable numbers.
+        let mut tournament_stmt = conn.prepare("SELECT DISTINCT tournament_id FROM teams")?;
+        let tournament_ids: Vec<String> = tournament_stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(tournament_stmt);
+
+        for tournament_id in tournament_ids {
+            let mut team_stmt = conn.prepare(
+                "SELECT id FROM teams WHERE tournament_id = ?1 ORDER BY created_at ASC",
+            )?;
+            let team_ids: Vec<String> = team_stmt
+                .query_map(rusqlite::params![tournament_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(team_stmt);
+
+            for (idx, team_id) in team_ids.iter().enumerate() {
+                conn.execute(
+                    "UPDATE teams SET team_number = ?1 WHERE id = ?2",
+                    rusqlite::params![(idx as i32) + 1, team_id],
+                )?;
+            }
+        }
     }
 
     Ok(())

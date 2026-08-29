@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button, Input } from '../../components/ui';
 
 interface TeamFormData {
+  teamNumber: string;
   captain: string;
   player2: string;
   player3: string;
@@ -12,11 +13,12 @@ interface TeamFormData {
 
 interface TeamFormProps {
   defaultValues?: Partial<TeamFormData>;
+  showPlayer3?: boolean;
   onSubmit: (data: TeamFormData) => void;
   onCancel: () => void;
 }
 
-export function TeamForm({ defaultValues, onSubmit, onCancel }: TeamFormProps) {
+export function TeamForm({ defaultValues, showPlayer3 = true, onSubmit, onCancel }: TeamFormProps) {
   const { t } = useTranslation();
 
   const {
@@ -25,6 +27,7 @@ export function TeamForm({ defaultValues, onSubmit, onCancel }: TeamFormProps) {
     formState: { errors },
   } = useForm<TeamFormData>({
     defaultValues: {
+      teamNumber: '',
       captain: '',
       player2: '',
       player3: '',
@@ -41,8 +44,26 @@ export function TeamForm({ defaultValues, onSubmit, onCancel }: TeamFormProps) {
     return true;
   };
 
+  const validateTeamNumber = (value: string) => {
+    if (!value || value.trim() === '') {
+      return t('validation.required');
+    }
+    if (!/^\d+$/.test(value.trim()) || parseInt(value, 10) < 1) {
+      return t('validation.positiveNumber');
+    }
+    return true;
+  };
+
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <Input
+        label={t('teams.teamNumber')}
+        type="number"
+        min={1}
+        {...register('teamNumber', { validate: validateTeamNumber })}
+        error={errors.teamNumber?.message}
+      />
+
       <Input
         label={t('teams.captain')}
         {...register('captain', { validate: validateRequired })}
@@ -55,10 +76,12 @@ export function TeamForm({ defaultValues, onSubmit, onCancel }: TeamFormProps) {
         error={errors.player2?.message}
       />
 
-      <Input
-        label={t('teams.player3')}
-        {...register('player3')}
-      />
+      {showPlayer3 && (
+        <Input
+          label={t('teams.player3')}
+          {...register('player3')}
+        />
+      )}
 
       <Input
         label={t('teams.region')}

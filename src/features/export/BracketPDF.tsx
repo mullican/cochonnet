@@ -1,7 +1,7 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
-import { formatTeamName } from '../../lib/utils';
-import type { PDFTranslations } from './ScoreSheetPDF';
+import { formatTeamLabel } from '../../lib/utils';
+import type { PDFTranslations } from './pdfTranslations';
 
 // Compact dimensions for fitting 16-team bracket on one page
 const MATCH_WIDTH = 110;
@@ -140,7 +140,7 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
   const getTeamName = (teamId: string | null | undefined) => {
     if (!teamId) return t.tbd;
     const team = teams.find((tm) => tm.id === teamId);
-    return formatTeamName(team?.captain);
+    return formatTeamLabel(team);
   };
 
   const formatDate = (dateString: string) => {

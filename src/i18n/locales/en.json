@@ -78,7 +78,7 @@
     "pairingMethod": "Qualifier Format",
     "pairingMethodOptions": {
       "swiss": "Swiss System",
-      "swissHotel": "Rounds (Swiss Hotel)",
+      "swissHotel": "Rounds",
       "roundRobin": "Round Robin",
       "poolPlay": "Pool Play"
     },
@@ -95,6 +95,7 @@
     "import": "Import Teams",
     "importCSV": "Import from CSV",
     "downloadTemplate": "Download Template",
+    "teamNumber": "Team Number",
     "captain": "Captain",
     "player2": "Player 2",
     "player3": "Player 3",
@@ -151,7 +152,8 @@
   },
   "export": {
     "title": "Export",
-    "scoreSheets": "Score Sheets",
+    "courtAssignments": "Court Assignments",
+    "courtAssignmentsDescription": "Export court assignments for each qualifying round, one round per page, to post before play begins.",
     "standings": "Standings",
     "brackets": "Brackets",
     "fullBackup": "Full Tournament Backup",
@@ -159,6 +161,7 @@
     "downloadJSON": "Download JSON"
   },
   "pdf": {
+    "courtAssignments": "Court Assignments",
     "round": "Round",
     "court": "Court",
     "vs": "vs",

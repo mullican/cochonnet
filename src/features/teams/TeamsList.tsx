@@ -28,7 +28,7 @@ interface TeamsListProps {
 export function TeamsList({ tournamentId }: TeamsListProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { teams, qualifyingRounds, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds } = useTournamentStore();
+  const { teams, qualifyingRounds, currentTournament, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds } = useTournamentStore();
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -38,6 +38,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
+  const [teamFormError, setTeamFormError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTeams(tournamentId);
@@ -47,10 +48,16 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   const hasRounds = qualifyingRounds.length > 0;
   const canDeleteAllTeams = teams.length > 0 && !hasRounds;
 
+  const showPlayer3 = currentTournament?.format === 'triple';
+
+  const nextTeamNumber = teams.length > 0 ? Math.max(...teams.map((t) => t.teamNumber)) + 1 : 1;
+
   const handleAddTeam = async (data: TeamFormData) => {
+    setTeamFormError(null);
     try {
       await createTeam({
         tournamentId,
+        teamNumber: parseInt(data.teamNumber, 10),
         captain: data.captain,
         player2: data.player2,
         player3: data.player3 || null,
@@ -60,14 +67,17 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
       setAddDialogOpen(false);
     } catch (error) {
       console.error('Failed to add team:', error);
+      setTeamFormError(String(error));
     }
   };
 
   const handleEditTeam = async (data: TeamFormData) => {
     if (!selectedTeam) return;
+    setTeamFormError(null);
     try {
       await updateTeam(selectedTeam.id, {
         tournamentId,
+        teamNumber: parseInt(data.teamNumber, 10),
         captain: data.captain,
         player2: data.player2,
         player3: data.player3 || null,
@@ -78,6 +88,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
       setSelectedTeam(null);
     } catch (error) {
       console.error('Failed to update team:', error);
+      setTeamFormError(String(error));
     }
   };
 
@@ -116,6 +127,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
         try {
           const teamsData = results.data.map((row) => ({
             tournamentId,
+            teamNumber: row.number ? parseInt(row.number, 10) : undefined,
             captain: row.captain || '',
             player2: row.player2 || '',
             player3: row.player3 || null,
@@ -148,7 +160,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   };
 
   const downloadTemplate = () => {
-    const template = 'captain,player2,player3,region,club\nJohn Doe,Jane Smith,Bob Wilson,North,Club A\n';
+    const template = 'number,captain,player2,player3,region,club\n1,John Doe,Jane Smith,Bob Wilson,North,Club A\n';
     const blob = new Blob([template], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -189,7 +201,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           >
             {t('teams.importCSV')}
           </Button>
-          <Button size="sm" onClick={() => setAddDialogOpen(true)}>
+          <Button size="sm" onClick={() => { setTeamFormError(null); setAddDialogOpen(true); }}>
             {t('teams.add')}
           </Button>
         </div>
@@ -220,20 +232,22 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-20">{t('teams.teamNumber')}</TableHead>
                 <TableHead>{t('teams.captain')}</TableHead>
                 <TableHead>{t('teams.player2')}</TableHead>
-                <TableHead>{t('teams.player3')}</TableHead>
+                {showPlayer3 && <TableHead>{t('teams.player3')}</TableHead>}
                 <TableHead>{t('teams.region')}</TableHead>
                 <TableHead>{t('teams.club')}</TableHead>
                 <TableHead className="w-24">{t('common.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {teams.map((team) => (
+              {[...teams].sort((a, b) => a.teamNumber - b.teamNumber).map((team) => (
                 <TableRow key={team.id}>
+                  <TableCell className="font-medium">{team.teamNumber}</TableCell>
                   <TableCell className="font-medium">{team.captain}</TableCell>
                   <TableCell>{team.player2}</TableCell>
-                  <TableCell>{team.player3 || '-'}</TableCell>
+                  {showPlayer3 && <TableCell>{team.player3 || '-'}</TableCell>}
                   <TableCell>{team.region || '-'}</TableCell>
                   <TableCell>{team.club || '-'}</TableCell>
                   <TableCell>
@@ -243,6 +257,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                         size="sm"
                         onClick={() => {
                           setSelectedTeam(team);
+                          setTeamFormError(null);
                           setEditDialogOpen(true);
                         }}
                       >
@@ -275,9 +290,19 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           <DialogHeader>
             <DialogTitle>{t('teams.add')}</DialogTitle>
           </DialogHeader>
+          {teamFormError && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {teamFormError}
+            </div>
+          )}
           <TeamForm
+            defaultValues={{ teamNumber: String(nextTeamNumber) }}
+            showPlayer3={showPlayer3}
             onSubmit={handleAddTeam}
-            onCancel={() => setAddDialogOpen(false)}
+            onCancel={() => {
+              setAddDialogOpen(false);
+              setTeamFormError(null);
+            }}
           />
         </DialogContent>
       </Dialog>
@@ -288,19 +313,27 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           <DialogHeader>
             <DialogTitle>{t('teams.edit')}</DialogTitle>
           </DialogHeader>
+          {teamFormError && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {teamFormError}
+            </div>
+          )}
           {selectedTeam && (
             <TeamForm
               defaultValues={{
+                teamNumber: String(selectedTeam.teamNumber),
                 captain: selectedTeam.captain,
                 player2: selectedTeam.player2,
                 player3: selectedTeam.player3 || '',
                 region: selectedTeam.region || '',
                 club: selectedTeam.club || '',
               }}
+              showPlayer3={showPlayer3}
               onSubmit={handleEditTeam}
               onCancel={() => {
                 setEditDialogOpen(false);
                 setSelectedTeam(null);
+                setTeamFormError(null);
               }}
             />
           )}

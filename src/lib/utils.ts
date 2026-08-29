@@ -20,3 +20,15 @@ export function formatTeamName(captainName: string | null | undefined): string {
 
   return `${lastName.toUpperCase()} ${firstInitial}.`;
 }
+
+/**
+ * Formats a team's number alongside its captain's name, e.g. "12 - DOE J."
+ * The number is what teams use to report their scores, so it should be
+ * shown wherever a team's name appears.
+ */
+export function formatTeamLabel(
+  team: { teamNumber: number; captain: string | null | undefined } | null | undefined
+): string {
+  if (!team) return 'TBD';
+  return `${team.teamNumber} - ${formatTeamName(team.captain)}`;
+}

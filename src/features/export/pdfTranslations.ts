@@ -1,0 +1,33 @@
+export interface PDFTranslations {
+  round: string;
+  court: string;
+  vs: string;
+  champion: string;
+  winner: string;
+  tbd: string;
+  bye: string;
+  final: string;
+  semiFinal: string;
+  quarterFinal: string;
+  rank: string;
+  team: string;
+  wins: string;
+  losses: string;
+  pointsFor: string;
+  pointsAgainst: string;
+  differential: string;
+  concours: string;
+  consolante: string;
+  standings: string;
+  standingsAsOf: string;
+  topTeamsAdvance: string;
+  legendWins: string;
+  legendLosses: string;
+  legendPointsFor: string;
+  legendPointsAgainst: string;
+  legendDifferential: string;
+  legendBuchholz: string;
+  legendFineBuchholz: string;
+  tiebreaker: string;
+  courtAssignments: string;
+}

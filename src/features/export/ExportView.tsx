@@ -6,10 +6,10 @@ import { writeFile, remove, exists } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { useTournamentStore } from '../../stores/tournamentStore';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '../../components/ui';
-import { ScoreSheetPDF } from './ScoreSheetPDF';
+import { CourtAssignmentsPDF } from './CourtAssignmentsPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
-import type { PDFTranslations } from './ScoreSheetPDF';
+import type { PDFTranslations } from './pdfTranslations';
 import type { QualifyingGame } from '../../types';
 
 interface ExportViewProps {
@@ -62,6 +62,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     legendBuchholz: t('pdf.legendBuchholz'),
     legendFineBuchholz: t('pdf.legendFineBuchholz'),
     tiebreaker: t('pdf.tiebreaker'),
+    courtAssignments: t('pdf.courtAssignments'),
   }), [t]);
 
   // Helper to write file, removing existing file first if needed
@@ -110,7 +111,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     }
   };
 
-  const handleExportScoreSheets = async () => {
+  const handleExportCourtAssignments = async () => {
     if (!currentTournament) return;
 
     setExporting(true);
@@ -120,7 +121,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       const allGames = await fetchAllGames();
 
       const doc = (
-        <ScoreSheetPDF
+        <CourtAssignmentsPDF
           tournament={currentTournament}
           teams={teams}
           rounds={qualifyingRounds}
@@ -134,7 +135,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       const uint8Array = new Uint8Array(arrayBuffer);
 
       const filePath = await save({
-        defaultPath: `${currentTournament.name}_score_sheets.pdf`,
+        defaultPath: `${currentTournament.name}_court_assignments.pdf`,
         filters: [{ name: 'PDF', extensions: ['pdf'] }],
       });
 
@@ -231,14 +232,14 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>{t('export.scoreSheets')}</CardTitle>
+            <CardTitle>{t('export.courtAssignments')}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-500 mb-4">
-              Export score sheets for all qualifying rounds with court assignments and team pairings.
+              {t('export.courtAssignmentsDescription')}
             </p>
             <Button
-              onClick={handleExportScoreSheets}
+              onClick={handleExportCourtAssignments}
               disabled={qualifyingRounds.length === 0 || exporting}
             >
               {exporting ? t('common.loading') : t('export.generatePDF')}

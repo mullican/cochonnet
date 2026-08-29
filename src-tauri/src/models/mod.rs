@@ -61,6 +61,7 @@ pub struct Umpire {
 pub struct Team {
     pub id: String,
     pub tournament_id: String,
+    pub team_number: i32,
     pub captain: String,
     pub player2: String,
     pub player3: Option<String>,
@@ -73,6 +74,7 @@ pub struct Team {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTeamData {
     pub tournament_id: String,
+    pub team_number: Option<i32>,
     pub captain: String,
     pub player2: String,
     pub player3: Option<String>,

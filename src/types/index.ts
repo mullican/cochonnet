@@ -35,6 +35,7 @@ export interface Umpire {
 export interface Team {
   id: string;
   tournamentId: string;
+  teamNumber: number;
   captain: string;
   player2: string;
   player3: string | null;
@@ -141,6 +142,7 @@ export interface TournamentFormData {
 }
 
 export interface TeamFormData {
+  teamNumber: string;
   captain: string;
   player2: string;
   player3: string;
@@ -150,6 +152,7 @@ export interface TeamFormData {
 
 // CSV Import
 export interface CSVTeamRow {
+  number?: string;
   captain: string;
   player2: string;
   player3?: string;

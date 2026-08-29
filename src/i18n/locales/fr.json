@@ -95,6 +95,7 @@
     "import": "Importer des Équipes",
     "importCSV": "Importer depuis CSV",
     "downloadTemplate": "Télécharger le Modèle",
+    "teamNumber": "Numéro d'Équipe",
     "captain": "Capitaine",
     "player2": "Joueur 2",
     "player3": "Joueur 3",
@@ -151,7 +152,8 @@
   },
   "export": {
     "title": "Exporter",
-    "scoreSheets": "Feuilles de Score",
+    "courtAssignments": "Attribution des Terrains",
+    "courtAssignmentsDescription": "Exporter l'attribution des terrains pour chaque tour de qualification, un tour par page, à afficher avant le début du jeu.",
     "standings": "Classements",
     "brackets": "Tableaux",
     "fullBackup": "Sauvegarde Complète",
@@ -159,6 +161,7 @@
     "downloadJSON": "Télécharger JSON"
   },
   "pdf": {
+    "courtAssignments": "Attribution des Terrains",
     "round": "Tour",
     "court": "Piste",
     "vs": "contre",

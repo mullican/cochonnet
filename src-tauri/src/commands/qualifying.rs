@@ -221,7 +221,7 @@ fn generate_single_round(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, captain, player2, player3, region, club, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, created_at
             FROM teams
             WHERE tournament_id = ?1
             "#,
@@ -233,12 +233,13 @@ fn generate_single_round(
             Ok(Team {
                 id: row.get(0)?,
                 tournament_id: row.get(1)?,
-                captain: row.get(2)?,
-                player2: row.get(3)?,
-                player3: row.get(4)?,
-                region: row.get(5)?,
-                club: row.get(6)?,
-                created_at: row.get(7)?,
+                team_number: row.get(2)?,
+                captain: row.get(3)?,
+                player2: row.get(4)?,
+                player3: row.get(5)?,
+                region: row.get(6)?,
+                club: row.get(7)?,
+                created_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?

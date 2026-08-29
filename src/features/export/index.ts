@@ -1,4 +1,5 @@
 export { ExportView } from './ExportView';
-export { ScoreSheetPDF } from './ScoreSheetPDF';
+export { CourtAssignmentsPDF } from './CourtAssignmentsPDF';
 export { StandingsPDF } from './StandingsPDF';
 export { BracketPDF } from './BracketPDF';
+export type { PDFTranslations } from './pdfTranslations';

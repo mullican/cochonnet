@@ -13,7 +13,7 @@ import {
   DialogFooter,
 } from '../../components/ui';
 import type { BracketMatch } from '../../types';
-import { formatTeamName } from '../../lib/utils';
+import { formatTeamLabel } from '../../lib/utils';
 
 interface BracketDisplayProps {
   bracketId: string;
@@ -70,7 +70,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   const getTeamName = (teamId: string | null | undefined) => {
     if (!teamId) return 'TBD';
     const team = teams.find((t) => t.id === teamId);
-    return formatTeamName(team?.captain);
+    return formatTeamLabel(team);
   };
 
   // Check if a match can be edited (has both teams, and next round match hasn't been scored)

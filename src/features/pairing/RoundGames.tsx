@@ -7,7 +7,7 @@ import {
   CardContent,
   Input,
 } from '../../components/ui';
-import { formatTeamName } from '../../lib/utils';
+import { formatTeamLabel } from '../../lib/utils';
 
 interface RoundGamesProps {
   roundId: string;
@@ -71,7 +71,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const getTeamName = (teamId: string | null | undefined) => {
     if (!teamId) return 'TBD';
     const team = teams.find((t) => t.id === teamId);
-    return formatTeamName(team?.captain);
+    return formatTeamLabel(team);
   };
 
   const handleScoreChange = (gameId: string, team: 'team1' | 'team2', value: string) => {
