@@ -1,6 +1,6 @@
-# Cochonnet - Petanque Tournament Manager
+# Cochonnet - Pétanque Tournament Manager
 
-A desktop application for managing petanque tournaments, built with Tauri 2, React, and TypeScript.
+A desktop application for managing pétanque tournaments, built with Tauri 2, React, and TypeScript.
 
 ## Features
 
