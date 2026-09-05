@@ -34,16 +34,17 @@ export function formatTeamLabel(
 }
 
 /**
- * Formats a panaché temporary team, e.g. "DOE J. / MARTIN P."
+ * Formats a panaché temporary team, e.g. "12 - DOE J. / 45 - MARTIN P."
  *
  * These teams are drawn fresh each round and have no number of their own, so
- * unlike formatTeamLabel there is nothing to prefix — the members are the name.
+ * unlike formatTeamLabel there is nothing to prefix the side with. Each member
+ * keeps the number they registered under, which is what score slips carry.
  */
 export function formatPanacheSideLabel(
-  side: { members: { captain: string | null | undefined }[] } | null | undefined
+  side: { members: { teamNumber: number; captain: string | null | undefined }[] } | null | undefined
 ): string {
   if (!side || side.members.length === 0) return 'TBD';
-  return side.members.map((m) => formatTeamName(m.captain)).join(' / ');
+  return side.members.map((m) => formatTeamLabel(m)).join(' / ');
 }
 
 /**
@@ -51,7 +52,7 @@ export function formatPanacheSideLabel(
  * Panaché games carry a drawn side; every other format carries a registered team.
  */
 export function formatGameSideLabel(
-  side: { members: { captain: string | null | undefined }[] } | null | undefined,
+  side: { members: { teamNumber: number; captain: string | null | undefined }[] } | null | undefined,
   team: { teamNumber: number; captain: string | null | undefined } | null | undefined
 ): string {
   if (side) return formatPanacheSideLabel(side);

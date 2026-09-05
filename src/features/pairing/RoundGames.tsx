@@ -7,8 +7,8 @@ import {
   CardContent,
   Input,
 } from '../../components/ui';
-import { formatTeamLabel, formatTeamName } from '../../lib/utils';
-import type { PanacheSide } from '../../types';
+import { formatTeamLabel } from '../../lib/utils';
+import type { GameWithTeams, PanacheSide, Team } from '../../types';
 
 interface RoundGamesProps {
   roundId: string;
@@ -32,10 +32,12 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
 
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
   const [initialLoading, setInitialLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     // Reset scores when switching rounds
     setScores({});
+    setSearch('');
     setInitialLoading(true);
     fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
     // Panache rounds may rest surplus players; other formats return an empty list.
@@ -80,6 +82,59 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   };
 
   /**
+   * The registered entrants on one side of a game: a single team for the team
+   * formats, or every member of the drawn side for panache. Both carry the
+   * numbers scorekeepers search and sort by.
+   */
+  const sideEntrants = (
+    side: PanacheSide | null | undefined,
+    teamId: string | null | undefined
+  ): Team[] => {
+    if (side) return side.members;
+    const team = teams.find((t) => t.id === teamId);
+    return team ? [team] : [];
+  };
+
+  const gameEntrants = (game: GameWithTeams): Team[] => [
+    ...sideEntrants(game.side1, game.team1Id),
+    ...sideEntrants(game.side2, game.team2Id),
+  ];
+
+  /**
+   * Score slips come in by number, so the lowest number in a game orders it.
+   * Court number breaks ties and covers a game whose teams have not loaded.
+   */
+  const lowestNumber = (game: GameWithTeams): number => {
+    const numbers = gameEntrants(game).map((team) => team.teamNumber);
+    return numbers.length > 0 ? Math.min(...numbers) : Number.MAX_SAFE_INTEGER;
+  };
+
+  /**
+   * An all-digits query looks up team numbers by prefix, so typing "8" narrows
+   * to 8, 80-89 and so on; anything else searches the players' names.
+   */
+  const matchesSearch = (game: GameWithTeams, query: string): boolean => {
+    if (!query) return true;
+    const entrants = gameEntrants(game);
+
+    if (/^\d+$/.test(query)) {
+      return entrants.some((team) => String(team.teamNumber).startsWith(query));
+    }
+
+    const needle = query.toLowerCase();
+    return entrants.some((team) =>
+      [team.captain, team.player2, team.player3]
+        .some((name) => (name || '').toLowerCase().includes(needle))
+    );
+  };
+
+  const query = search.trim();
+  const orderedGames = [...qualifyingGames].sort(
+    (a, b) => lowestNumber(a) - lowestNumber(b) || a.courtNumber - b.courtNumber
+  );
+  const visibleGames = orderedGames.filter((game) => matchesSearch(game, query));
+
+  /**
    * One side of a game. Panache draws a temporary team, so its members are listed
    * one per line; every other format shows the registered team's number and name.
    */
@@ -95,7 +150,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       <div className="font-medium leading-tight">
         {side.members.map((member) => (
           <div key={member.id} className="truncate">
-            {formatTeamName(member.captain)}
+            {formatTeamLabel(member)}
             {member.isChampion && <span className="ml-1 text-amber-600">★</span>}
           </div>
         ))}
@@ -169,68 +224,93 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
         <div className="rounded-md bg-gray-50 px-4 py-3 text-sm">
           <span className="font-medium text-gray-700">{t('pairing.sittingOut')}: </span>
           <span className="text-gray-600">
-            {qualifyingSitouts.map((p) => formatTeamName(p.captain)).join(', ')}
+            {qualifyingSitouts.map((p) => formatTeamLabel(p)).join(', ')}
           </span>
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {qualifyingGames.map((game) => (
-          <Card key={game.id}>
-            <CardContent className="py-4">
-              <div className="text-xs text-gray-500 mb-2">
-                {t('pairing.court')} {game.courtNumber}
-              </div>
-
-              {game.isBye ? (
-                <div className="text-center">
-                  <div className="font-medium">{getTeamName(game.team1Id)}</div>
-                  <div className="text-sm text-gray-500 mt-2">{t('pairing.bye')}</div>
-                  <div className="text-sm text-green-600 mt-1">13 - 7</div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <SideLabel side={game.side1} teamId={game.team1Id} />
-                    </div>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={13}
-                      value={scores[game.id]?.team1 || ''}
-                      onChange={(e) => handleScoreChange(game.id, 'team1', e.target.value)}
-                      onBlur={() => handleSaveScore(game.id)}
-                      disabled={isComplete}
-                      className="w-16 text-center"
-                    />
-                  </div>
-
-                  <div className="text-center text-xs text-gray-400">
-                    {t('pairing.vs')}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <SideLabel side={game.side2} teamId={game.team2Id} />
-                    </div>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={13}
-                      value={scores[game.id]?.team2 || ''}
-                      onChange={(e) => handleScoreChange(game.id, 'team2', e.target.value)}
-                      onBlur={() => handleSaveScore(game.id)}
-                      disabled={isComplete}
-                      className="w-16 text-center"
-                    />
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+      <div className="flex items-center gap-3">
+        <div className="w-full max-w-xs">
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('pairing.searchGames')}
+          />
+        </div>
+        <span className="whitespace-nowrap text-sm text-gray-500">
+          {t('pairing.gamesShown', {
+            shown: visibleGames.length,
+            total: qualifyingGames.length,
+          })}
+        </span>
       </div>
+
+      {visibleGames.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center text-gray-500">
+            {t('pairing.noGamesMatch')}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {visibleGames.map((game) => (
+            <Card key={game.id}>
+              <CardContent className="py-4">
+                <div className="text-xs text-gray-500 mb-2">
+                  {t('pairing.court')} {game.courtNumber}
+                </div>
+
+                {game.isBye ? (
+                  <div className="text-center">
+                    <div className="font-medium">{getTeamName(game.team1Id)}</div>
+                    <div className="text-sm text-gray-500 mt-2">{t('pairing.bye')}</div>
+                    <div className="text-sm text-green-600 mt-1">13 - 7</div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <SideLabel side={game.side1} teamId={game.team1Id} />
+                      </div>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={13}
+                        value={scores[game.id]?.team1 || ''}
+                        onChange={(e) => handleScoreChange(game.id, 'team1', e.target.value)}
+                        onBlur={() => handleSaveScore(game.id)}
+                        disabled={isComplete}
+                        className="w-16 text-center"
+                      />
+                    </div>
+
+                    <div className="text-center text-xs text-gray-400">
+                      {t('pairing.vs')}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <SideLabel side={game.side2} teamId={game.team2Id} />
+                      </div>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={13}
+                        value={scores[game.id]?.team2 || ''}
+                        onChange={(e) => handleScoreChange(game.id, 'team2', e.target.value)}
+                        onBlur={() => handleSaveScore(game.id)}
+                        disabled={isComplete}
+                        className="w-16 text-center"
+                      />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {!isComplete && (
         <div className="flex justify-end">

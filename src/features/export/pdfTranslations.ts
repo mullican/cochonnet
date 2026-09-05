@@ -2,8 +2,10 @@ export interface PDFTranslations {
   round: string;
   court: string;
   vs: string;
-  champion: string;
-  winner: string;
+  /** Short prefix on a bracket's court cell, e.g. "C" for court 7 -> "C7". */
+  courtAbbrev: string;
+  /** Spells out what that prefix means, for the bracket page header. */
+  courtLegend: string;
   tbd: string;
   bye: string;
   final: string;

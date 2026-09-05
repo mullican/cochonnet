@@ -4,6 +4,7 @@ use crate::commands::teams::get_team_by_id;
 use chrono::Utc;
 use rand::seq::SliceRandom;
 use rusqlite::params;
+use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
@@ -190,17 +191,16 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
     }
 
     // Get tournament settings
-    let (advance_all, advance_count, bracket_size, number_of_courts, has_consolante): (bool, Option<i32>, i32, i32, bool) =
+    let (advance_all, advance_count, bracket_size, has_consolante): (bool, Option<i32>, i32, bool) =
         conn.query_row(
-            "SELECT advance_all, advance_count, bracket_size, number_of_courts, has_consolante FROM tournaments WHERE id = ?1",
+            "SELECT advance_all, advance_count, bracket_size, has_consolante FROM tournaments WHERE id = ?1",
             params![tournament_id],
             |row| {
                 Ok((
                     row.get::<_, i32>(0)? != 0,
                     row.get(1)?,
                     row.get(2)?,
-                    row.get(3)?,
-                    row.get::<_, i32>(4)? != 0,
+                    row.get::<_, i32>(3)? != 0,
                 ))
             },
         )
@@ -268,7 +268,7 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
         )
         .map_err(|e| e.to_string())?;
 
-        create_bracket_matches(&conn, &concours_id, &concours_teams, number_of_courts)?;
+        create_bracket_matches(&conn, &concours_id, &concours_teams)?;
 
         // Create Consolante bracket if there are enough teams
         if consolante_teams.len() >= 2 {
@@ -283,9 +283,10 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
             )
             .map_err(|e| e.to_string())?;
 
-            create_bracket_matches(&conn, &consolante_id, &consolante_teams, number_of_courts)?;
+            create_bracket_matches(&conn, &consolante_id, &consolante_teams)?;
         }
 
+        assign_bracket_courts(&conn, &tournament_id)?;
         return Ok(());
     }
 
@@ -327,11 +328,98 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
         )
         .map_err(|e| e.to_string())?;
 
-        // Create matches for this bracket with random pairing and court assignment
-        create_bracket_matches(&conn, &bracket_id, &bracket_teams, number_of_courts)?;
+        // Create matches for this bracket with random pairing
+        create_bracket_matches(&conn, &bracket_id, &bracket_teams)?;
 
         start_idx = end_idx;
         bracket_idx += 1;
+    }
+
+    assign_bracket_courts(&conn, &tournament_id)?;
+
+    Ok(())
+}
+
+/// The wave of play a bracket match belongs to.
+///
+/// A consolante is drawn from its main bracket's first-round losers, so it
+/// starts one round behind: main-bracket round N is on court at the same time
+/// as its consolante's round N-1. Matches sharing a wave are played
+/// simultaneously and so must not share a court.
+fn play_wave(round_number: i32, is_consolante: bool) -> i32 {
+    if is_consolante {
+        round_number + 1
+    } else {
+        round_number
+    }
+}
+
+/// Numbers the courts across every bracket in the tournament.
+///
+/// Courts used to be numbered within each bracket, which sent four different
+/// games to court 1 as soon as more than one bracket ran. A court number only
+/// means something tournament-wide, so this renumbers every bracket together
+/// and is re-run whenever a bracket is added.
+///
+/// BYEs are left without a court: nobody plays them, so they take up no space.
+fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+    let number_of_courts: i32 = conn
+        .query_row(
+            "SELECT number_of_courts FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if number_of_courts < 1 {
+        return Ok(());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT m.id, m.round_number, b.is_consolante, m.is_bye
+            FROM bracket_matches m
+            JOIN brackets b ON b.id = m.bracket_id
+            WHERE b.tournament_id = ?1
+            ORDER BY b.name ASC, m.round_number ASC, m.match_number ASC
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let matches: Vec<(String, i32, bool, bool)> = stmt
+        .query_map(params![tournament_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, i32>(2)? != 0,
+                row.get::<_, i32>(3)? != 0,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Each wave is numbered from court 1 upward. A wave with more games than
+    // the tournament has courts wraps around, which is what happens on the
+    // ground too: the extra games wait for a court to free up.
+    let mut filled: HashMap<i32, i32> = HashMap::new();
+
+    for (match_id, round_number, is_consolante, is_bye) in matches {
+        let court: Option<i32> = if is_bye {
+            None
+        } else {
+            let taken = filled.entry(play_wave(round_number, is_consolante)).or_insert(0);
+            let court = (*taken % number_of_courts) + 1;
+            *taken += 1;
+            Some(court)
+        };
+
+        conn.execute(
+            "UPDATE bracket_matches SET court_number = ?2 WHERE id = ?1",
+            params![match_id, court],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -341,7 +429,6 @@ fn create_bracket_matches(
     conn: &rusqlite::Connection,
     bracket_id: &str,
     teams: &[&Team],
-    number_of_courts: i32,
 ) -> Result<(), String> {
     let num_teams = teams.len();
 
@@ -383,7 +470,6 @@ fn create_bracket_matches(
 
     for match_idx in 0..first_round_match_count {
         let match_id = &match_ids[0][match_idx];
-        let court_number = (match_idx as i32 % number_of_courts) + 1;
 
         // Determine if this is a BYE match
         // BYE matches are distributed: first num_byes matches have a BYE
@@ -405,13 +491,12 @@ fn create_bracket_matches(
         conn.execute(
             r#"
             INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, ?7)
+            VALUES (?1, ?2, 1, ?3, NULL, ?4, ?5, NULL, ?6)
             "#,
             params![
                 match_id,
                 bracket_id,
                 match_idx as i32 + 1,
-                court_number,
                 team1_id,
                 team2_id,
                 if is_bye { 1 } else { 0 }
@@ -424,19 +509,12 @@ fn create_bracket_matches(
     for round_idx in 1..match_ids.len() {
         let round_number = (round_idx + 1) as i32;
         for (match_idx, match_id) in match_ids[round_idx].iter().enumerate() {
-            let court_number = (match_idx as i32 % number_of_courts) + 1;
             conn.execute(
                 r#"
                 INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-                VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, 0)
+                VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, 0)
                 "#,
-                params![
-                    match_id,
-                    bracket_id,
-                    round_number,
-                    match_idx as i32 + 1,
-                    court_number,
-                ],
+                params![match_id, bracket_id, round_number, match_idx as i32 + 1],
             )
             .map_err(|e| format!("Failed to insert round {} match: {}", round_number, e))?;
         }
@@ -604,11 +682,11 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
     }
 
     // Check if tournament has consolante enabled and get advance_all setting
-    let (has_consolante, number_of_courts, advance_all): (bool, i32, bool) = conn
+    let (has_consolante, advance_all): (bool, bool) = conn
         .query_row(
-            "SELECT has_consolante, number_of_courts, advance_all FROM tournaments WHERE id = ?1",
+            "SELECT has_consolante, advance_all FROM tournaments WHERE id = ?1",
             params![tournament_id],
-            |row| Ok((row.get::<_, i32>(0)? != 0, row.get(1)?, row.get::<_, i32>(2)? != 0)),
+            |row| Ok((row.get::<_, i32>(0)? != 0, row.get::<_, i32>(1)? != 0)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -693,7 +771,11 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
     .map_err(|e| e.to_string())?;
 
     // Create matches for consolante bracket with random pairing of losers
-    create_consolante_matches(conn, &consolante_id, &loser_ids, number_of_courts)?;
+    create_consolante_matches(conn, &consolante_id, &loser_ids)?;
+
+    // The new bracket shares courts with the rounds still to play, so every
+    // bracket has to be renumbered together.
+    assign_bracket_courts(conn, &tournament_id)?;
 
     Ok(())
 }
@@ -702,7 +784,6 @@ fn create_consolante_matches(
     conn: &rusqlite::Connection,
     bracket_id: &str,
     team_ids: &[String],
-    number_of_courts: i32,
 ) -> Result<(), String> {
     let num_teams = team_ids.len();
 
@@ -742,7 +823,6 @@ fn create_consolante_matches(
 
     for match_idx in 0..first_round_match_count {
         let match_id = &match_ids[0][match_idx];
-        let court_number = (match_idx as i32 % number_of_courts) + 1;
 
         let is_bye_match = match_idx < num_byes;
 
@@ -760,24 +840,23 @@ fn create_consolante_matches(
         conn.execute(
             r#"
             INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-            VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, NULL, ?7)
+            VALUES (?1, ?2, 1, ?3, NULL, ?4, ?5, NULL, ?6)
             "#,
-            params![match_id, bracket_id, match_idx as i32 + 1, court_number, team1_id, team2_id, if is_bye { 1 } else { 0 }],
+            params![match_id, bracket_id, match_idx as i32 + 1, team1_id, team2_id, if is_bye { 1 } else { 0 }],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    // Insert subsequent rounds (empty) with court assignment
+    // Insert subsequent rounds (empty); courts are numbered tournament-wide later
     for round_idx in 1..match_ids.len() {
         let round_number = (round_idx + 1) as i32;
         for (match_idx, match_id) in match_ids[round_idx].iter().enumerate() {
-            let court_number = (match_idx as i32 % number_of_courts) + 1;
             conn.execute(
                 r#"
                 INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number, team1_id, team2_id, next_match_id, is_bye)
-                VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, 0)
+                VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, 0)
                 "#,
-                params![match_id, bracket_id, round_number, match_idx as i32 + 1, court_number],
+                params![match_id, bracket_id, round_number, match_idx as i32 + 1],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -839,4 +918,194 @@ fn create_consolante_matches(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema;
+    use rusqlite::Connection;
+
+    const TOURNAMENT_ID: &str = "t1";
+
+    fn setup(number_of_courts: i32) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::create_tables(&conn).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (id, name, team_composition, tournament_type, start_date,
+                end_date, director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, bracket_size,
+                pairing_method, region_avoidance, created_at, updated_at)
+            VALUES (?1, 'T', 'select', 'open', '2026-01-01', '2026-01-01', 'd', 'u',
+                'double', 'single', ?2, 5, 1, 1, 32, 'swissHotel', 0, 'now', 'now')
+            "#,
+            params![TOURNAMENT_ID, number_of_courts],
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Adds a bracket shaped like a real one: `size` entrants, so round N holds
+    /// size / 2^N matches. `byes` first-round matches are walkovers.
+    fn add_bracket(conn: &Connection, name: &str, is_consolante: bool, size: i32, byes: i32) {
+        let bracket_id = format!("b-{}", name);
+        conn.execute(
+            r#"
+            INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, 0, 'now')
+            "#,
+            params![bracket_id, TOURNAMENT_ID, name, if is_consolante { 1 } else { 0 }, size],
+        )
+        .unwrap();
+
+        let rounds = (size as f64).log2() as i32;
+        for round in 1..=rounds {
+            let count = size >> round;
+            for match_number in 1..=count {
+                let is_bye = round == 1 && match_number <= byes;
+                conn.execute(
+                    r#"
+                    INSERT INTO bracket_matches (id, bracket_id, round_number, match_number,
+                        court_number, team1_id, team2_id, next_match_id, is_bye)
+                    VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, ?5)
+                    "#,
+                    params![
+                        format!("{}-r{}-m{}", name, round, match_number),
+                        bracket_id,
+                        round,
+                        match_number,
+                        if is_bye { 1 } else { 0 }
+                    ],
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    /// (wave, court) for every match that was given a court.
+    fn assigned_waves(conn: &Connection) -> Vec<(i32, i32)> {
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT m.round_number, b.is_consolante, m.court_number
+                FROM bracket_matches m
+                JOIN brackets b ON b.id = m.bracket_id
+                WHERE m.court_number IS NOT NULL
+                "#,
+            )
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok((
+                play_wave(row.get(0)?, row.get::<_, i32>(1)? != 0),
+                row.get(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    }
+
+    /// The regression this whole allocator exists for: numbering courts within
+    /// each bracket sent bracket A, B, C and D all to court 1 at the same time.
+    #[test]
+    fn concurrent_brackets_never_share_a_court() {
+        let conn = setup(64);
+        for name in ["A", "B", "C", "D"] {
+            add_bracket(&conn, name, false, 32, 0);
+        }
+        for name in ["AA", "BB", "CC", "DD"] {
+            add_bracket(&conn, name, true, 16, 0);
+        }
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let mut seen = assigned_waves(&conn);
+        let total = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), total, "two games in one wave landed on one court");
+    }
+
+    /// A consolante's first round runs alongside its main bracket's second, so
+    /// the two must not be numbered as if each had the courts to itself.
+    #[test]
+    fn a_consolante_shares_the_wave_of_its_main_brackets_next_round() {
+        let conn = setup(64);
+        add_bracket(&conn, "A", false, 32, 0);
+        add_bracket(&conn, "AA", true, 16, 0);
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let courts = |bracket: &str, round: i32| -> Vec<i32> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT m.court_number FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id
+                     WHERE b.name = ?1 AND m.round_number = ?2 ORDER BY m.match_number",
+                )
+                .unwrap();
+            stmt.query_map(params![bracket, round], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<i32>, _>>()
+                .unwrap()
+        };
+
+        // A's round 2 (8 games) and AA's round 1 (8 games) play together.
+        let main_round2 = courts("A", 2);
+        let consolante_round1 = courts("AA", 1);
+        assert_eq!(main_round2, (1..=8).collect::<Vec<_>>());
+        assert_eq!(consolante_round1, (9..=16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn byes_are_left_without_a_court() {
+        let conn = setup(8);
+        add_bracket(&conn, "A", false, 8, 2);
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let byes_with_courts: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM bracket_matches WHERE is_bye = 1 AND court_number IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(byes_with_courts, 0);
+
+        // The two real first-round games take courts 1 and 2, not 3 and 4:
+        // a walkover should not hold a court open.
+        let first_round: Vec<i32> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT court_number FROM bracket_matches
+                     WHERE round_number = 1 AND is_bye = 0 ORDER BY match_number",
+                )
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(first_round, vec![1, 2]);
+    }
+
+    /// More games than courts is a real possibility for a small club; the
+    /// numbering wraps rather than handing out a court that does not exist.
+    #[test]
+    fn a_wave_larger_than_the_venue_wraps_within_the_court_count() {
+        let conn = setup(4);
+        add_bracket(&conn, "A", false, 32, 0);
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let out_of_range: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM bracket_matches WHERE court_number < 1 OR court_number > 4",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(out_of_range, 0);
+    }
 }

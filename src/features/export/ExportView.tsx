@@ -10,7 +10,7 @@ import { CourtAssignmentsPDF } from './CourtAssignmentsPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
 import type { PDFTranslations } from './pdfTranslations';
-import type { GameWithTeams, Team } from '../../types';
+import type { BracketMatch, GameWithTeams, Team } from '../../types';
 
 interface ExportViewProps {
   tournamentId: string;
@@ -25,7 +25,6 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     qualifyingRounds,
     standings,
     brackets,
-    bracketMatches,
   } = useTournamentStore();
 
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +34,8 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     round: t('pdf.round'),
     court: t('pdf.court'),
     vs: t('pdf.vs'),
-    champion: t('pdf.champion'),
-    winner: t('pdf.winner'),
+    courtAbbrev: t('pdf.courtAbbrev'),
+    courtLegend: t('pdf.courtLegend'),
     tbd: t('pdf.tbd'),
     bye: t('pdf.bye'),
     final: t('pdf.final'),
@@ -107,11 +106,28 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     return byRound;
   };
 
-  const downloadPDF = async (pdfDocument: Parameters<typeof pdf>[0], defaultFilename: string) => {
+  // The store only ever holds the matches of the one bracket being viewed, so
+  // an export that reads it straight gets a filled first page and blank ones
+  // after. Every bracket has to be loaded here.
+  const fetchAllBracketMatches = async (): Promise<BracketMatch[]> => {
+    const allMatches: BracketMatch[] = [];
+    for (const bracket of brackets) {
+      const bracketMatchList = await invoke<BracketMatch[]>('get_matches_for_bracket', {
+        bracketId: bracket.id,
+      });
+      allMatches.push(...bracketMatchList);
+    }
+    return allMatches;
+  };
+
+  const downloadPDF = async (
+    buildDocument: () => Parameters<typeof pdf>[0] | Promise<Parameters<typeof pdf>[0]>,
+    defaultFilename: string
+  ) => {
     setExporting(true);
     setError(null);
     try {
-      const blob = await pdf(pdfDocument).toBlob();
+      const blob = await pdf(await buildDocument()).toBlob();
       const arrayBuffer = await blob.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
 
@@ -175,30 +191,34 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   const handleExportStandings = async () => {
     if (!currentTournament) return;
 
-    const doc = (
-      <StandingsPDF
-        tournament={currentTournament}
-        teams={teams}
-        standings={standings}
-        translations={pdfTranslations}
-      />
+    await downloadPDF(
+      () => (
+        <StandingsPDF
+          tournament={currentTournament}
+          teams={teams}
+          standings={standings}
+          translations={pdfTranslations}
+        />
+      ),
+      `${currentTournament.name}_standings.pdf`
     );
-    await downloadPDF(doc, `${currentTournament.name}_standings.pdf`);
   };
 
   const handleExportBrackets = async () => {
     if (!currentTournament) return;
 
-    const doc = (
-      <BracketPDF
-        tournament={currentTournament}
-        teams={teams}
-        brackets={brackets}
-        matches={bracketMatches}
-        translations={pdfTranslations}
-      />
+    await downloadPDF(
+      async () => (
+        <BracketPDF
+          tournament={currentTournament}
+          teams={teams}
+          brackets={brackets}
+          matches={await fetchAllBracketMatches()}
+          translations={pdfTranslations}
+        />
+      ),
+      `${currentTournament.name}_brackets.pdf`
     );
-    await downloadPDF(doc, `${currentTournament.name}_brackets.pdf`);
   };
 
   const handleExportFullBackup = async () => {
@@ -209,6 +229,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     try {
       // Fetch all games for backup
       const allGames = await fetchAllGames();
+      const allBracketMatches = await fetchAllBracketMatches();
 
       const backup = {
         tournament: currentTournament,
@@ -217,7 +238,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
         qualifyingGames: allGames,
         standings,
         brackets,
-        bracketMatches,
+        bracketMatches: allBracketMatches,
         exportedAt: new Date().toISOString(),
       };
 

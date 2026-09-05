@@ -36,6 +36,37 @@ This is a **Tauri 2** desktop application with:
 | **Swiss Hotel** | All at once | Point Quotient | Random pairings pre-generated upfront with graduated constraints. |
 | **Round Robin** | All at once | Point Quotient | Berger circle method - each team plays every other team. |
 | **Pool Play** | Round-by-round | Point Quotient | Fixed 3 rounds: R1 random, R2 winners vs winners, R3 only 1-1 teams play. Teams with 2 losses eliminated. |
+| **Panaché** | All at once, redrawable | Wins → Differential | Individual registration. Players are shuffled into fresh temporary teams each round. No bracket — one final game. |
+
+### Panaché (individual format)
+
+Unlike the other four formats, panaché registers **individuals** rather than teams. It reuses
+the `teams` table for that: one row per player with `captain` set and `player2` empty, the same
+shape singles registration already uses. That means `team_standings` becomes per-player standings
+with no new table, and team CRUD, CSV import and the standings views all work unchanged.
+
+What is new is the **temporary team**, drawn fresh each round:
+
+- `panache_teams` / `panache_team_members` — the throwaway doubles or triples for one round
+- `panache_sitouts` — surplus players resting that round (not a bye: no record is awarded)
+- `qualifying_games.side1_id` / `side2_id` — point at temporary teams; `team1_id`/`team2_id` are NULL
+- `teams.is_champion` — an expert the draw keeps off other champions' teams
+- `qualifying_rounds.is_final` — the single championship game
+
+Key points:
+
+- **Team size** comes from the tournament `format` field (Double → 2, Triple → 3).
+- **Roster capacity** is `number_of_courts × 2 × team_size`, not `× 2` (see `check_roster_capacity`
+  in `teams.rs`) — a panaché game occupies a whole court.
+- **Scoring** fans a temporary team's result out to every member individually
+  (`apply_game_result` in `qualifying.rs`).
+- **The final** records a winner but does not feed back into `team_standings`, the same way
+  bracket results don't.
+- **The scheduler** (`solve_panache_schedule` in `commands/panache.rs`) is a pure function:
+  randomized greedy with restarts plus local search, over a weighted cost function. Constraints
+  are costs, not filters, because MELEE.md phrases each as "unless unavoidable". Weights, in
+  order: champions sharing a team (1000) > repeated teammates (100) > a non-champion who never
+  meets a champion (50) > repeated opponents (10) > sit-out imbalance (5).
 
 **Key Functions in `qualifying.rs`:**
 - `generate_swiss_pairings()` - Pairs teams by similar win records
@@ -44,6 +75,13 @@ This is a **Tauri 2** desktop application with:
 - `calculate_buchholz_and_ranks()` - Swiss tiebreaker calculation
 - `calculate_point_quotient_ranks()` - Point quotient tiebreaker calculation
 - `complete_round()` - Score processing and rank updates
+- `apply_game_result()` - Adds one result to each competitor's standing (a team, or every member of a panaché temporary team)
+
+**Key Functions in `panache.rs`:**
+- `solve_panache_schedule()` - Draws the whole schedule; pure, unit-tested, no DB access
+- `generate_panache_rounds()` / `redraw_panache_rounds()` / `generate_panache_final()` - Commands
+
+Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 
 ### Tiebreaker Algorithms
 
@@ -86,6 +124,8 @@ Located in `src-tauri/src/db/schema.rs`:
 - `bracket_matches` - Elimination match results
 - `pairing_history` - Tracks previous matchups
 - `court_history` - Court assignment tracking
+- `panache_teams` / `panache_team_members` - Panaché temporary teams, per round
+- `panache_sitouts` - Panaché players resting a round
 
 **Key Standings Fields:**
 - wins, losses, points_for, points_against
@@ -129,6 +169,18 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 1. Create function in appropriate `commands/*.rs` file with `#[tauri::command]`
 2. Register in `lib.rs` invoke_handler
 3. Call from frontend using `invoke<ReturnType>('command_name', { args })`
+
+## Tests
+
+`cd src-tauri && cargo test` — the only automated tests in the repo. They cover the panaché
+scheduler (sit-out rotation, no repeated teammates, champion separation and exposure), the
+panaché database round-trip (sides persist, a shared score lands on each member), and the
+schema migrations.
+
+The migration test matters most: the `tournaments` CHECK-constraint rebuild is invoked with
+`.ok()`, so a failure is **silent** — the data survives but the table keeps its old constraint
+and the new pairing method is rejected later with no clue why. Any test of that rebuild must
+assert the new constraint is present, not just that the data is intact.
 
 ## Build Notes
 
