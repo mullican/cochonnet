@@ -5,9 +5,12 @@ export function Table({
   ...props
 }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="relative w-full overflow-auto">
+    // min-w-max is what makes a wide table scroll instead of squeezing its
+    // columns until the text wraps - the difference between a readable
+    // standings sheet on an iPad and an unreadable one.
+    <div className="relative w-full overflow-x-auto overscroll-x-contain">
       <table
-        className={`w-full caption-bottom text-sm ${className}`}
+        className={`w-full min-w-max caption-bottom text-sm ${className}`}
         {...props}
       />
     </div>
@@ -60,7 +63,7 @@ export function TableHead({
 }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={`h-12 px-4 text-left align-middle font-medium text-gray-500 ${className}`}
+      className={`h-12 whitespace-nowrap px-4 text-left align-middle font-medium text-gray-500 pointer-coarse:h-14 pointer-coarse:px-3 ${className}`}
       {...props}
     />
   );
@@ -71,6 +74,9 @@ export function TableCell({
   ...props
 }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={`p-4 align-middle ${className}`} {...props} />
+    <td
+      className={`whitespace-nowrap p-4 align-middle pointer-coarse:px-3 pointer-coarse:py-4 ${className}`}
+      {...props}
+    />
   );
 }

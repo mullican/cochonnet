@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { pdf } from '@react-pdf/renderer';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -16,9 +16,15 @@ interface ExportViewProps {
   tournamentId: string;
 }
 
+/** A document the operator can ask for, and the name it is filed or spooled under. */
+interface PdfJob {
+  build: () => Parameters<typeof pdf>[0] | Promise<Parameters<typeof pdf>[0]>;
+  filename: string;
+}
+
 export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   const { t } = useTranslation();
-  const [exporting, setExporting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const {
     currentTournament,
     teams,
@@ -28,6 +34,16 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   } = useTournamentStore();
 
   const [error, setError] = useState<string | null>(null);
+
+  // What this build can actually do. iPadOS has no "save it where you like", so
+  // it offers printing in place of export; macOS offers both.
+  const [canExport, setCanExport] = useState(true);
+  const [canPrint, setCanPrint] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>('file_export_available').then(setCanExport).catch(() => setCanExport(true));
+    invoke<boolean>('printing_available').then(setCanPrint).catch(() => setCanPrint(false));
+  }, []);
 
   // Get PDF translations from current language
   const pdfTranslations: PDFTranslations = useMemo(() => ({
@@ -120,79 +136,71 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     return allMatches;
   };
 
-  const downloadPDF = async (
-    buildDocument: () => Parameters<typeof pdf>[0] | Promise<Parameters<typeof pdf>[0]>,
-    defaultFilename: string
-  ) => {
-    setExporting(true);
+  const renderBytes = async (job: PdfJob): Promise<Uint8Array> => {
+    const blob = await pdf(await job.build()).toBlob();
+    return new Uint8Array(await blob.arrayBuffer());
+  };
+
+  /** Ask where the PDF should go, then write it there. Desktop only. */
+  const exportPdf = async (job: PdfJob) => {
+    setBusy(true);
     setError(null);
     try {
-      const blob = await pdf(await buildDocument()).toBlob();
-      const arrayBuffer = await blob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-
+      const bytes = await renderBytes(job);
       const filePath = await save({
-        defaultPath: defaultFilename,
+        defaultPath: job.filename,
         filters: [{ name: 'PDF', extensions: ['pdf'] }],
       });
-
       if (filePath) {
-        await writeFileOverwrite(filePath, uint8Array);
+        await writeFileOverwrite(filePath, bytes);
       }
     } catch (err) {
       console.error('Failed to export PDF:', err);
-      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(t('export.exportFailed', { error: err instanceof Error ? err.message : String(err) }));
     } finally {
-      setExporting(false);
+      setBusy(false);
     }
   };
 
-  const handleExportCourtAssignments = async () => {
-    if (!currentTournament) return;
-
-    setExporting(true);
+  /**
+   * Send the PDF straight to a printer: the default printer with no dialog on
+   * macOS, the system AirPrint sheet on iPadOS.
+   */
+  const printPdf = async (job: PdfJob) => {
+    setBusy(true);
     setError(null);
     try {
-      // Fetch all games for all rounds
-      const allGames = await fetchAllGames();
-      const allSitouts = await fetchAllSitouts();
+      const bytes = await renderBytes(job);
+      // Sent as a plain number array. These documents top out around 150 KB and
+      // this serialises the same way on every platform.
+      await invoke('print_pdf', { fileName: job.filename, data: Array.from(bytes) });
+    } catch (err) {
+      console.error('Failed to print PDF:', err);
+      setError(t('export.printFailed', { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      const doc = (
+  const courtAssignmentsJob = (): PdfJob | null =>
+    currentTournament && {
+      filename: `${currentTournament.name}_court_assignments.pdf`,
+      build: async () => (
         <CourtAssignmentsPDF
           tournament={currentTournament}
           teams={teams}
           rounds={qualifyingRounds}
-          games={allGames}
-          sitouts={allSitouts}
+          games={await fetchAllGames()}
+          sitouts={await fetchAllSitouts()}
           translations={pdfTranslations}
         />
-      );
+      ),
+    };
 
-      const blob = await pdf(doc).toBlob();
-      const arrayBuffer = await blob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-
-      const filePath = await save({
-        defaultPath: `${currentTournament.name}_court_assignments.pdf`,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      });
-
-      if (filePath) {
-        await writeFileOverwrite(filePath, uint8Array);
-      }
-    } catch (err) {
-      console.error('Failed to export PDF:', err);
-      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleExportStandings = async () => {
-    if (!currentTournament) return;
-
-    await downloadPDF(
-      () => (
+  const standingsJob = (): PdfJob | null =>
+    currentTournament && {
+      filename: `${currentTournament.name}_standings.pdf`,
+      build: () => (
         <StandingsPDF
           tournament={currentTournament}
           teams={teams}
@@ -200,15 +208,12 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           translations={pdfTranslations}
         />
       ),
-      `${currentTournament.name}_standings.pdf`
-    );
-  };
+    };
 
-  const handleExportBrackets = async () => {
-    if (!currentTournament) return;
-
-    await downloadPDF(
-      async () => (
+  const bracketsJob = (): PdfJob | null =>
+    currentTournament && {
+      filename: `${currentTournament.name}_brackets.pdf`,
+      build: async () => (
         <BracketPDF
           tournament={currentTournament}
           teams={teams}
@@ -217,32 +222,20 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           translations={pdfTranslations}
         />
       ),
-      `${currentTournament.name}_brackets.pdf`
-    );
-  };
+    };
 
   const handleExportFullBackup = async () => {
     if (!currentTournament) return;
 
-    setExporting(true);
+    setBusy(true);
     setError(null);
     try {
-      // Fetch all games for backup
-      const allGames = await fetchAllGames();
-      const allBracketMatches = await fetchAllBracketMatches();
-
-      const backup = {
-        tournament: currentTournament,
-        teams,
-        qualifyingRounds,
-        qualifyingGames: allGames,
-        standings,
-        brackets,
-        bracketMatches: allBracketMatches,
-        exportedAt: new Date().toISOString(),
-      };
-
-      const jsonString = JSON.stringify(backup, null, 2);
+      // Assembled in the backend so it covers every table a tournament touches.
+      // The version built here from store state silently dropped umpires,
+      // pairing and court history, and the panache tables.
+      const jsonString = await invoke<string>('export_tournament_backup', {
+        tournamentId: currentTournament.id,
+      });
       const encoder = new TextEncoder();
       const uint8Array = encoder.encode(jsonString);
 
@@ -256,11 +249,58 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       }
     } catch (err) {
       console.error('Failed to export backup:', err);
-      setError(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(t('export.exportFailed', { error: err instanceof Error ? err.message : String(err) }));
     } finally {
-      setExporting(false);
+      setBusy(false);
     }
   };
+
+  /** One document, offered through whichever actions this platform supports. */
+  const PdfCard = ({
+    title,
+    description,
+    job,
+    disabled,
+  }: {
+    title: string;
+    description: string;
+    job: () => PdfJob | null;
+    disabled: boolean;
+  }) => (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-500 mb-4">{description}</p>
+        <div className="flex flex-wrap gap-2">
+          {canExport && (
+            <Button
+              onClick={() => {
+                const pdfJob = job();
+                if (pdfJob) exportPdf(pdfJob);
+              }}
+              disabled={disabled || busy}
+            >
+              {busy ? t('common.loading') : t('export.generatePDF')}
+            </Button>
+          )}
+          {canPrint && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const pdfJob = job();
+                if (pdfJob) printPdf(pdfJob);
+              }}
+              disabled={disabled || busy}
+            >
+              {busy ? t('common.loading') : t('export.print')}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="space-y-6">
@@ -273,70 +313,46 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('export.courtAssignments')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-500 mb-4">
-              {t('export.courtAssignmentsDescription')}
-            </p>
-            <Button
-              onClick={handleExportCourtAssignments}
-              disabled={qualifyingRounds.length === 0 || exporting}
-            >
-              {exporting ? t('common.loading') : t('export.generatePDF')}
-            </Button>
-          </CardContent>
-        </Card>
+        <PdfCard
+          title={t('export.courtAssignments')}
+          description={t('export.courtAssignmentsDescription')}
+          job={courtAssignmentsJob}
+          disabled={qualifyingRounds.length === 0}
+        />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('export.standings')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-500 mb-4">
-              {t('export.standingsDescription')}
-            </p>
-            <Button
-              onClick={handleExportStandings}
-              disabled={standings.length === 0 || exporting}
-            >
-              {exporting ? t('common.loading') : t('export.generatePDF')}
-            </Button>
-          </CardContent>
-        </Card>
+        <PdfCard
+          title={t('export.standings')}
+          description={t('export.standingsDescription')}
+          job={standingsJob}
+          disabled={standings.length === 0}
+        />
 
         {currentTournament?.pairingMethod !== 'panache' && (
+          <PdfCard
+            title={t('export.brackets')}
+            description={t('export.bracketsDescription')}
+            job={bracketsJob}
+            disabled={brackets.length === 0}
+          />
+        )}
+
+        {/* A backup is a file, not a document: nothing to print, and nowhere to
+            put it on a platform with no save dialog. */}
+        {canExport && (
           <Card>
             <CardHeader>
-              <CardTitle>{t('export.brackets')}</CardTitle>
+              <CardTitle>{t('export.fullBackup')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-500 mb-4">{t('export.bracketsDescription')}</p>
-              <Button
-                onClick={handleExportBrackets}
-                disabled={brackets.length === 0 || exporting}
-              >
-                {exporting ? t('common.loading') : t('export.generatePDF')}
+              <p className="text-sm text-gray-500 mb-4">
+                {t('export.fullBackupDescription')}
+              </p>
+              <Button onClick={handleExportFullBackup} disabled={busy}>
+                {busy ? t('common.loading') : t('export.downloadJSON')}
               </Button>
             </CardContent>
           </Card>
         )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('export.fullBackup')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-500 mb-4">
-              {t('export.fullBackupDescription')}
-            </p>
-            <Button onClick={handleExportFullBackup} disabled={exporting}>
-              {exporting ? t('common.loading') : t('export.downloadJSON')}
-            </Button>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

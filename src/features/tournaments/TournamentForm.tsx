@@ -70,7 +70,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
           <h3 className="font-semibold text-gray-900">{t('tournaments.setup')}</h3>
 
           {/* Name row + Type/Composition/Format row */}
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             <Input
               label={t('tournaments.name')}
               {...register('name', { validate: validateRequired })}
@@ -116,7 +116,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
           </div>
 
           {/* Dates, Rounds, Courts row */}
-          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
             <Input
               type="date"
               label={t('tournaments.startDate')}
@@ -203,7 +203,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
         <CardContent className="space-y-4 pt-6">
           <h3 className="font-semibold text-gray-900">{t('tournaments.competitionStructure')}</h3>
 
-          <div className="grid gap-4 grid-cols-2 sm:grid-cols-4 items-end">
+          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4 items-end">
             <Select
               label={t('tournaments.pairingMethod')}
               value={watch('pairingMethod')}

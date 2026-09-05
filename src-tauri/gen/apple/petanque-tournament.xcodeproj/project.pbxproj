@@ -1,0 +1,538 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4063C4EC4A9759A18CBE3359 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = F799DD5E01359C838BDC03D9 /* assets */; };
+		4CEE917BD3F87D155C9657B4 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DBC97A335470B95C261CEE26 /* Metal.framework */; };
+		57D1988B012B74A45293FC35 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = CCA43F5EC18B4660871102C4 /* libapp.a */; };
+		6E54F3C2184D3B232D9E1E19 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2BF3BAE38C667F0F6ECCB117 /* Assets.xcassets */; };
+		72C6F08F62E8AEA788B112CF /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D1F9593627B35CF5736429C4 /* libapp.a */; };
+		758D2F2582C4067219B9CDFB /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 18A1F23578B8BFCF551E16A7 /* main.mm */; };
+		87AF1DBC90B96A43DD8D0DA6 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C18BD2952579F6AF12C2B75 /* QuartzCore.framework */; };
+		87FA34A930667FEE97D70C9B /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D5240611D0A5D9BBD02A9F7A /* UIKit.framework */; };
+		8AB9974B3C0ED9C28ED15DD1 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = EA3F6849CA2BB32A090B51A0 /* LaunchScreen.storyboard */; };
+		95660B358C8799B9485CF020 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 36D7EFAA3701266DEADC1776 /* CoreGraphics.framework */; };
+		9B9F6924AD8D442CF4BFCD13 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0D625E7A3FD93EC5158180AE /* Security.framework */; };
+		DAF4FFE18FF4FAABFB18C83D /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9B6F07AC0804B8BA9C198C6B /* WebKit.framework */; };
+		EB80D1AD22AA40586DB8B004 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E297117890F86B0D444A07D0 /* MetalKit.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		017021EA4B2FEC30D4C35F4B /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		0D625E7A3FD93EC5158180AE /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		18A1F23578B8BFCF551E16A7 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		1A0EEA82728FEF642A519313 /* qualifying.rs */ = {isa = PBXFileReference; path = qualifying.rs; sourceTree = "<group>"; };
+		227D3DF704A7B16A118A3489 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		2BF3BAE38C667F0F6ECCB117 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		3529CBE1AD9731AA68012937 /* tournaments.rs */ = {isa = PBXFileReference; path = tournaments.rs; sourceTree = "<group>"; };
+		36985329D7D02F38AFF8E819 /* printing.rs */ = {isa = PBXFileReference; path = printing.rs; sourceTree = "<group>"; };
+		36D7EFAA3701266DEADC1776 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		3E2CE58B24A0A74161AF9F1B /* brackets.rs */ = {isa = PBXFileReference; path = brackets.rs; sourceTree = "<group>"; };
+		3FF1283505D385FF5637B261 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		633C1DC837CB30CF5E2EBBAE /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		7C18BD2952579F6AF12C2B75 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		817985BBCBE826B9A0EE97E6 /* panache.rs */ = {isa = PBXFileReference; path = panache.rs; sourceTree = "<group>"; };
+		8D0E3F837666D26AF879E688 /* schema.rs */ = {isa = PBXFileReference; path = schema.rs; sourceTree = "<group>"; };
+		986D77713533E1D1E6E6398F /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		99C25ADE117C2D56DAE381F8 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		9B6F07AC0804B8BA9C198C6B /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		AEA5B8097717A2F04285C187 /* petanque-tournament_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "petanque-tournament_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B99E1EB7B888E89A9E08EC01 /* teams.rs */ = {isa = PBXFileReference; path = teams.rs; sourceTree = "<group>"; };
+		C868B6C56574E06607D242B2 /* petanque-tournament_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "petanque-tournament_iOS.entitlements"; sourceTree = "<group>"; };
+		CCA43F5EC18B4660871102C4 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		D1F9593627B35CF5736429C4 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		D5240611D0A5D9BBD02A9F7A /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		DBC97A335470B95C261CEE26 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		DE758C500809A0352E08B423 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		E297117890F86B0D444A07D0 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		EA3F6849CA2BB32A090B51A0 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		F799DD5E01359C838BDC03D9 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8C229C48DA37CFD364260B33 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				72C6F08F62E8AEA788B112CF /* libapp.a in Frameworks */,
+				95660B358C8799B9485CF020 /* CoreGraphics.framework in Frameworks */,
+				4CEE917BD3F87D155C9657B4 /* Metal.framework in Frameworks */,
+				EB80D1AD22AA40586DB8B004 /* MetalKit.framework in Frameworks */,
+				87AF1DBC90B96A43DD8D0DA6 /* QuartzCore.framework in Frameworks */,
+				9B9F6924AD8D442CF4BFCD13 /* Security.framework in Frameworks */,
+				87FA34A930667FEE97D70C9B /* UIKit.framework in Frameworks */,
+				DAF4FFE18FF4FAABFB18C83D /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		15516B5411B6787CC2465717 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AEA5B8097717A2F04285C187 /* petanque-tournament_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		177CEAF8C576A19D0D2A86E2 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				9C0EA2B1A3AF013CE806D194 /* petanque-tournament */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		1960E40413EB2D5CD7725FBD = {
+			isa = PBXGroup;
+			children = (
+				F799DD5E01359C838BDC03D9 /* assets */,
+				2BF3BAE38C667F0F6ECCB117 /* Assets.xcassets */,
+				EA3F6849CA2BB32A090B51A0 /* LaunchScreen.storyboard */,
+				4968761B8071D974A2432055 /* Externals */,
+				30BB03E66035DCDD602FB236 /* petanque-tournament_iOS */,
+				177CEAF8C576A19D0D2A86E2 /* Sources */,
+				421F0CFF759F4C2966FB28F1 /* src */,
+				20F5B366259F12F321B934A4 /* Frameworks */,
+				15516B5411B6787CC2465717 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		20F5B366259F12F321B934A4 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				36D7EFAA3701266DEADC1776 /* CoreGraphics.framework */,
+				D1F9593627B35CF5736429C4 /* libapp.a */,
+				DBC97A335470B95C261CEE26 /* Metal.framework */,
+				E297117890F86B0D444A07D0 /* MetalKit.framework */,
+				7C18BD2952579F6AF12C2B75 /* QuartzCore.framework */,
+				0D625E7A3FD93EC5158180AE /* Security.framework */,
+				D5240611D0A5D9BBD02A9F7A /* UIKit.framework */,
+				9B6F07AC0804B8BA9C198C6B /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		30BB03E66035DCDD602FB236 /* petanque-tournament_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				3FF1283505D385FF5637B261 /* Info.plist */,
+				C868B6C56574E06607D242B2 /* petanque-tournament_iOS.entitlements */,
+			);
+			path = "petanque-tournament_iOS";
+			sourceTree = "<group>";
+		};
+		327D132D7D20E7763C5E3D80 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				017021EA4B2FEC30D4C35F4B /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		393D0A14CF3E28871D1E195E /* debug */ = {
+			isa = PBXGroup;
+			children = (
+				CCA43F5EC18B4660871102C4 /* libapp.a */,
+			);
+			path = debug;
+			sourceTree = "<group>";
+		};
+		421F0CFF759F4C2966FB28F1 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				227D3DF704A7B16A118A3489 /* lib.rs */,
+				986D77713533E1D1E6E6398F /* main.rs */,
+				EACB077D065C86A616F9447F /* commands */,
+				EA524C30081FAA7F114413FD /* db */,
+				6BAE26A826C232F35FB26535 /* models */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		4968761B8071D974A2432055 /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+				4FA3E481857E597DA5508E5B /* x86_64 */,
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		4FA3E481857E597DA5508E5B /* x86_64 */ = {
+			isa = PBXGroup;
+			children = (
+				393D0A14CF3E28871D1E195E /* debug */,
+			);
+			path = x86_64;
+			sourceTree = "<group>";
+		};
+		6BAE26A826C232F35FB26535 /* models */ = {
+			isa = PBXGroup;
+			children = (
+				DE758C500809A0352E08B423 /* mod.rs */,
+			);
+			path = models;
+			sourceTree = "<group>";
+		};
+		9C0EA2B1A3AF013CE806D194 /* petanque-tournament */ = {
+			isa = PBXGroup;
+			children = (
+				18A1F23578B8BFCF551E16A7 /* main.mm */,
+				327D132D7D20E7763C5E3D80 /* bindings */,
+			);
+			path = "petanque-tournament";
+			sourceTree = "<group>";
+		};
+		EA524C30081FAA7F114413FD /* db */ = {
+			isa = PBXGroup;
+			children = (
+				99C25ADE117C2D56DAE381F8 /* mod.rs */,
+				8D0E3F837666D26AF879E688 /* schema.rs */,
+			);
+			path = db;
+			sourceTree = "<group>";
+		};
+		EACB077D065C86A616F9447F /* commands */ = {
+			isa = PBXGroup;
+			children = (
+				3E2CE58B24A0A74161AF9F1B /* brackets.rs */,
+				633C1DC837CB30CF5E2EBBAE /* mod.rs */,
+				817985BBCBE826B9A0EE97E6 /* panache.rs */,
+				36985329D7D02F38AFF8E819 /* printing.rs */,
+				1A0EEA82728FEF642A519313 /* qualifying.rs */,
+				B99E1EB7B888E89A9E08EC01 /* teams.rs */,
+				3529CBE1AD9731AA68012937 /* tournaments.rs */,
+			);
+			path = commands;
+			sourceTree = "<group>";
+		};
+		"TEMP_86CE725D-1ABB-4414-84D5-F12EF6758E16" /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = arm64;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7EBDB3E3F827FA930EC01A25 /* petanque-tournament_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0EF9058FF0507619D7C1F4CF /* Build configuration list for PBXNativeTarget "petanque-tournament_iOS" */;
+			buildPhases = (
+				1421B0C00EE2134039B9F913 /* Build Rust Code */,
+				00C27D9FF0F8C0D1150D9F5B /* Sources */,
+				5D50F846C352F24F168DA7D9 /* Resources */,
+				8C229C48DA37CFD364260B33 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "petanque-tournament_iOS";
+			packageProductDependencies = (
+			);
+			productName = "petanque-tournament_iOS";
+			productReference = AEA5B8097717A2F04285C187 /* petanque-tournament_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B969B49530560A947096282A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					7EBDB3E3F827FA930EC01A25 = {
+						DevelopmentTeam = 739JGABY52;
+					};
+				};
+			};
+			buildConfigurationList = C9DC201A3E2F5CC0C32DDE76 /* Build configuration list for PBXProject "petanque-tournament" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 1960E40413EB2D5CD7725FBD;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 15516B5411B6787CC2465717 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7EBDB3E3F827FA930EC01A25 /* petanque-tournament_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5D50F846C352F24F168DA7D9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6E54F3C2184D3B232D9E1E19 /* Assets.xcassets in Resources */,
+				8AB9974B3C0ED9C28ED15DD1 /* LaunchScreen.storyboard in Resources */,
+				4063C4EC4A9759A18CBE3359 /* assets in Resources */,
+				57D1988B012B74A45293FC35 /* libapp.a in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1421B0C00EE2134039B9F913 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nnvm use 20.20.0 >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || true\nnpm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		00C27D9FF0F8C0D1150D9F5B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				758D2F2582C4067219B9CDFB /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0E7F645E3DEE3AB12191563F /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		32F3A37F797A2B8D5AFD802B /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		922BBD48B2E7D2719A402DA9 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+					x86_64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "petanque-tournament_iOS/petanque-tournament_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 739JGABY52;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "petanque-tournament_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.cochonnet.app;
+				PRODUCT_NAME = "Cochonnet";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+				VALID_ARCHS = "arm64  x86_64";
+			};
+			name = release;
+		};
+		C33E2CB2E85FACC99A7E4DD8 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+					x86_64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "petanque-tournament_iOS/petanque-tournament_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 739JGABY52;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "petanque-tournament_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.cochonnet.app;
+				PRODUCT_NAME = "Cochonnet";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+				VALID_ARCHS = "arm64  x86_64";
+			};
+			name = debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0EF9058FF0507619D7C1F4CF /* Build configuration list for PBXNativeTarget "petanque-tournament_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C33E2CB2E85FACC99A7E4DD8 /* debug */,
+				922BBD48B2E7D2719A402DA9 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		C9DC201A3E2F5CC0C32DDE76 /* Build configuration list for PBXProject "petanque-tournament" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				32F3A37F797A2B8D5AFD802B /* debug */,
+				0E7F645E3DEE3AB12191563F /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B969B49530560A947096282A /* Project object */;
+}

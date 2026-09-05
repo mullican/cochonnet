@@ -24,3 +24,11 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+
+# iPadOS reaches AirPrint only through UIKit. These are already in the graph
+# via tauri, so pinning the same 0.3 line costs no extra build.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-ui-kit = "0.3"
+objc2-core-foundation = "0.3"

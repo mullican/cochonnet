@@ -55,6 +55,13 @@ pub fn run() {
             commands::generate_panache_final,
             commands::get_sitouts_for_round,
             commands::set_team_champion,
+            // Printing / export capability
+            commands::print_pdf,
+            commands::printing_available,
+            commands::file_export_available,
+            // Whole-tournament backup / restore
+            commands::export_tournament_backup,
+            commands::import_tournament_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

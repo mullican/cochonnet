@@ -12,7 +12,7 @@ export function Layout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white">
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white pt-[env(safe-area-inset-top)] ps-[env(safe-area-inset-left)] pe-[env(safe-area-inset-right)]">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-8">
             <Link to="/" className="flex items-center gap-2">
@@ -46,13 +46,20 @@ export function Layout() {
                     <stop offset="0%" stopColor="white" stopOpacity="0.5" />
                     <stop offset="100%" stopColor="white" stopOpacity="0" />
                   </linearGradient>
+                  <clipPath id="headerBouleClip">
+                    <circle cx="32" cy="28" r="26" />
+                  </clipPath>
                 </defs>
                 {/* Main steel boule */}
                 <circle cx="32" cy="28" r="26" fill="url(#steelGradient)" />
-                {/* Grooves on boule */}
-                <path d="M10 22 Q32 18 54 22" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M8 30 Q32 26 56 30" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M10 38 Q32 34 54 38" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
+                {/* Grooves: latitude circles of the sphere, so each is an
+                    ellipse arc sagging by sin(12deg) - the same geometry as
+                    icons/boule.svg, scaled to this 64px mark. */}
+                <g clipPath="url(#headerBouleClip)" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M 7.61 19 A 24.46 5.09 0 1 0 56.39 19" />
+                  <path d="M 6.00 28 A 26.00 5.41 0 0 0 58.00 28" />
+                  <path d="M 7.61 37 A 24.46 5.09 0 0 0 56.39 37" />
+                </g>
                 {/* Highlight shine on boule */}
                 <ellipse cx="22" cy="18" rx="8" ry="5" fill="url(#shineGradient)" />
                 {/* Red cochonnet in front */}
@@ -74,7 +81,7 @@ export function Layout() {
           </div>
         </div>
       </header>
-      <main className="flex-1">
+      <main className="flex-1 ps-[env(safe-area-inset-left)] pe-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <Outlet />
         </div>

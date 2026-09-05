@@ -57,7 +57,7 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
   const sortedStandings = [...standings].sort((a, b) => a.rank - b.rank);
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>

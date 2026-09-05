@@ -258,7 +258,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card className="overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
