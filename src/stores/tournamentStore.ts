@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Tournament, Team, QualifyingRound, QualifyingGame, TeamStanding, Bracket, BracketMatch } from '../types';
+import type { Tournament, Team, QualifyingRound, GameWithTeams, TeamStanding, Bracket, BracketMatch } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 interface TournamentState {
@@ -7,8 +7,10 @@ interface TournamentState {
   currentTournament: Tournament | null;
   teams: Team[];
   qualifyingRounds: QualifyingRound[];
-  qualifyingGames: QualifyingGame[];
+  qualifyingGames: GameWithTeams[];
   standings: TeamStanding[];
+  /** Panache only: players resting in the selected round. */
+  qualifyingSitouts: Team[];
   brackets: Bracket[];
   bracketMatches: BracketMatch[];
   loading: boolean;
@@ -39,6 +41,13 @@ interface TournamentState {
   updateGameScore: (gameId: string, team1Score: number, team2Score: number) => Promise<void>;
   completeRound: (roundId: string) => Promise<void>;
 
+  // Panache actions
+  generatePanacheRounds: (tournamentId: string) => Promise<QualifyingRound[]>;
+  redrawPanacheRounds: (tournamentId: string, fromRoundNumber: number) => Promise<QualifyingRound[]>;
+  generatePanacheFinal: (tournamentId: string) => Promise<QualifyingRound>;
+  fetchSitoutsForRound: (roundId: string) => Promise<void>;
+  setTeamChampion: (teamId: string, isChampion: boolean) => Promise<void>;
+
   // Standings actions
   fetchStandings: (tournamentId: string) => Promise<void>;
 
@@ -59,6 +68,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
   qualifyingRounds: [],
   qualifyingGames: [],
   standings: [],
+  qualifyingSitouts: [],
   brackets: [],
   bracketMatches: [],
   loading: false,
@@ -269,7 +279,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await invoke('delete_all_qualifying_rounds', { tournamentId });
-      set({ qualifyingRounds: [], qualifyingGames: [], loading: false });
+      set({ qualifyingRounds: [], qualifyingGames: [], qualifyingSitouts: [], loading: false });
     } catch (error) {
       set({ error: String(error), loading: false });
       throw error;
@@ -279,7 +289,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
   fetchGamesForRound: async (roundId: string) => {
     set({ loading: true, error: null });
     try {
-      const games = await invoke<QualifyingGame[]>('get_games_for_round', {
+      const games = await invoke<GameWithTeams[]>('get_games_for_round', {
         roundId,
       });
       set({ qualifyingGames: games, loading: false });
@@ -320,6 +330,87 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
       }));
     } catch (error) {
       set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  // Panache actions
+  generatePanacheRounds: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const rounds = await invoke<QualifyingRound[]>('generate_panache_rounds', {
+        tournamentId,
+      });
+      set((state) => ({
+        qualifyingRounds: [...state.qualifyingRounds, ...rounds],
+        loading: false,
+      }));
+      return rounds;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  redrawPanacheRounds: async (tournamentId: string, fromRoundNumber: number) => {
+    set({ loading: true, error: null });
+    try {
+      const rounds = await invoke<QualifyingRound[]>('redraw_panache_rounds', {
+        tournamentId,
+        fromRoundNumber,
+      });
+      // The redrawn rounds are new rows, so replace everything from that point on.
+      set((state) => ({
+        qualifyingRounds: [
+          ...state.qualifyingRounds.filter((r) => r.roundNumber < fromRoundNumber),
+          ...rounds,
+        ],
+        qualifyingGames: [],
+        qualifyingSitouts: [],
+        loading: false,
+      }));
+      return rounds;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  generatePanacheFinal: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const round = await invoke<QualifyingRound>('generate_panache_final', {
+        tournamentId,
+      });
+      set((state) => ({
+        qualifyingRounds: [...state.qualifyingRounds, round],
+        loading: false,
+      }));
+      return round;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  fetchSitoutsForRound: async (roundId: string) => {
+    try {
+      const sitouts = await invoke<Team[]>('get_sitouts_for_round', { roundId });
+      set({ qualifyingSitouts: sitouts });
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  setTeamChampion: async (teamId: string, isChampion: boolean) => {
+    set({ error: null });
+    try {
+      await invoke('set_team_champion', { teamId, isChampion });
+      set((state) => ({
+        teams: state.teams.map((t) => (t.id === teamId ? { ...t, isChampion } : t)),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
       throw error;
     }
   },

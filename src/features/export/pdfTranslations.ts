@@ -28,6 +28,15 @@ export interface PDFTranslations {
   legendDifferential: string;
   legendBuchholz: string;
   legendFineBuchholz: string;
+  legendPointQuotient: string;
   tiebreaker: string;
+  tiebreakerSwiss: string;
+  tiebreakerPointQuotient: string;
+  tiebreakerPanache: string;
   courtAssignments: string;
+  buchholz: string;
+  fineBuchholz: string;
+  pointQuotient: string;
+  player: string;
+  sittingOut: string;
 }

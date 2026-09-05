@@ -78,6 +78,16 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
     return formatTeamLabel(team);
   };
 
+  // Mirror the on-screen column matrix in StandingsTable: only show the tiebreaker
+  // columns the tournament's format actually ranks on.
+  const pairingMethod = tournament.pairingMethod;
+  const isPanache = pairingMethod === 'panache';
+  const showBuchholz = pairingMethod === 'swiss';
+  const showPointQuotient =
+    pairingMethod === 'swissHotel' ||
+    pairingMethod === 'roundRobin' ||
+    pairingMethod === 'poolPlay';
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
   };
@@ -85,9 +95,11 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
   const sortedStandings = [...standings].sort((a, b) => a.rank - b.rank);
 
   // Top teams based on advancement settings
-  const topTeamCount = tournament.advanceAll
-    ? standings.length
-    : tournament.advanceCount || tournament.bracketSize;
+  // Panache has no bracket, so nothing "advances" — every row is on equal footing.
+  const topTeamCount =
+    tournament.advanceAll || tournament.pairingMethod === 'panache'
+      ? standings.length
+      : tournament.advanceCount || tournament.bracketSize;
 
   return (
     <Document>
@@ -97,7 +109,7 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
           <Text style={styles.subtitle}>
             {t.standingsAsOf} {formatDate(new Date().toISOString())}
           </Text>
-          {!tournament.advanceAll && (
+          {!tournament.advanceAll && !isPanache && (
             <Text style={styles.subtitle}>
               {t.topTeamsAdvance.replace('{{count}}', String(topTeamCount))}
             </Text>
@@ -107,13 +119,20 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
         <View style={styles.table}>
           <View style={styles.tableHeader}>
             <Text style={[styles.rankCol, styles.bold]}>{t.rank}</Text>
-            <Text style={[styles.teamCol, styles.bold]}>{t.team}</Text>
+            <Text style={[styles.teamCol, styles.bold]}>{isPanache ? t.player : t.team}</Text>
             <Text style={[styles.statCol, styles.bold]}>{t.wins}</Text>
             <Text style={[styles.statCol, styles.bold]}>{t.losses}</Text>
             <Text style={[styles.statCol, styles.bold]}>{t.pointsFor}</Text>
             <Text style={[styles.statCol, styles.bold]}>{t.pointsAgainst}</Text>
-            <Text style={[styles.statCol, styles.bold]}>Buch</Text>
-            <Text style={[styles.statCol, styles.bold]}>FBuch</Text>
+            {showBuchholz && (
+              <>
+                <Text style={[styles.statCol, styles.bold]}>{t.buchholz}</Text>
+                <Text style={[styles.statCol, styles.bold]}>{t.fineBuchholz}</Text>
+              </>
+            )}
+            {showPointQuotient && (
+              <Text style={[styles.statCol, styles.bold]}>{t.pointQuotient}</Text>
+            )}
             <Text style={[styles.statCol, styles.bold]}>{t.differential}</Text>
           </View>
 
@@ -131,8 +150,17 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
                 <Text style={styles.statCol}>{standing.losses}</Text>
                 <Text style={styles.statCol}>{standing.pointsFor}</Text>
                 <Text style={styles.statCol}>{standing.pointsAgainst}</Text>
-                <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
-                <Text style={styles.statCol}>{standing.fineBuchholzScore.toFixed(1)}</Text>
+                {showBuchholz && (
+                  <>
+                    <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
+                    <Text style={styles.statCol}>{standing.fineBuchholzScore.toFixed(1)}</Text>
+                  </>
+                )}
+                {showPointQuotient && (
+                  <Text style={styles.statCol}>
+                    {standing.pointQuotient > 100 ? '∞' : standing.pointQuotient.toFixed(2)}
+                  </Text>
+                )}
                 <Text
                   style={[
                     styles.statCol,
@@ -153,10 +181,22 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
 
         <View style={{ marginTop: 20 }}>
           <Text style={{ fontSize: 8, color: '#666' }}>
-            {t.legendWins}, {t.legendLosses}, {t.legendPointsFor}, {t.legendPointsAgainst}, {t.legendBuchholz}, {t.legendFineBuchholz}, {t.legendDifferential}
+            {[
+              t.legendWins,
+              t.legendLosses,
+              t.legendPointsFor,
+              t.legendPointsAgainst,
+              ...(showBuchholz ? [t.legendBuchholz, t.legendFineBuchholz] : []),
+              ...(showPointQuotient ? [t.legendPointQuotient] : []),
+              t.legendDifferential,
+            ].join(', ')}
           </Text>
           <Text style={{ fontSize: 8, color: '#666', marginTop: 5 }}>
-            {t.tiebreaker}
+            {showBuchholz
+              ? t.tiebreakerSwiss
+              : isPanache
+                ? t.tiebreakerPanache
+                : t.tiebreakerPointQuotient}
           </Text>
         </View>
       </Page>

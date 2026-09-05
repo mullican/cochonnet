@@ -12,7 +12,7 @@ pub fn get_teams(db: State<Database>, tournament_id: String) -> Result<Vec<Team>
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
             FROM teams
             WHERE tournament_id = ?1
             ORDER BY team_number
@@ -31,7 +31,8 @@ pub fn get_teams(db: State<Database>, tournament_id: String) -> Result<Vec<Team>
                 player3: row.get(5)?,
                 region: row.get(6)?,
                 club: row.get(7)?,
-                created_at: row.get(8)?,
+                is_champion: row.get::<_, i32>(8)? != 0,
+                created_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -48,7 +49,7 @@ pub fn get_team(db: State<Database>, id: String) -> Result<Team, String> {
     let team = conn
         .query_row(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
             FROM teams
             WHERE id = ?1
             "#,
@@ -63,7 +64,8 @@ pub fn get_team(db: State<Database>, id: String) -> Result<Team, String> {
                     player3: row.get(5)?,
                     region: row.get(6)?,
                     club: row.get(7)?,
-                    created_at: row.get(8)?,
+                    is_champion: row.get::<_, i32>(8)? != 0,
+                    created_at: row.get(9)?,
                 })
             },
         )
@@ -76,32 +78,7 @@ pub fn get_team(db: State<Database>, id: String) -> Result<Team, String> {
 pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Get tournament's number of courts
-    let number_of_courts: i32 = conn
-        .query_row(
-            "SELECT number_of_courts FROM tournaments WHERE id = ?1",
-            params![data.tournament_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // Get current team count
-    let current_team_count: i32 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
-            params![data.tournament_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // Check if adding one more team would exceed the limit (2x courts)
-    let max_teams = number_of_courts * 2;
-    if current_team_count >= max_teams {
-        return Err(format!(
-            "Cannot add more teams. Maximum is {} teams ({} courts × 2).",
-            max_teams, number_of_courts
-        ));
-    }
+    check_roster_capacity(&conn, &data.tournament_id, 1)?;
 
     let team_number = resolve_team_number(&conn, &data.tournament_id, data.team_number, None)?;
 
@@ -110,8 +87,8 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
 
     conn.execute(
         r#"
-        INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#,
         params![
             id,
@@ -122,6 +99,7 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
             data.player3,
             data.region,
             data.club,
+            if data.is_champion.unwrap_or(false) { 1 } else { 0 },
             now,
         ],
     )
@@ -147,10 +125,66 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
         player3: data.player3,
         region: data.region,
         club: data.club,
+        is_champion: data.is_champion.unwrap_or(false),
         created_at: now,
     };
 
     Ok(team)
+}
+
+/// Refuses a roster that could not all play at once.
+///
+/// The team formats seat two teams per court. Panache registers individuals and
+/// seats a whole doubles or triples game per court, so the same court count holds
+/// two, four or six times as many entries depending on the format.
+fn check_roster_capacity(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    adding: i32,
+) -> Result<(), String> {
+    let (number_of_courts, pairing_method, format): (i32, String, String) = conn
+        .query_row(
+            "SELECT number_of_courts, pairing_method, format FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let is_panache = pairing_method == "panache";
+    let per_court = if is_panache {
+        match format.as_str() {
+            "triple" => 6,
+            _ => 4,
+        }
+    } else {
+        2
+    };
+    let noun = if is_panache { "players" } else { "teams" };
+
+    let current: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let max_entries = number_of_courts * per_court;
+    if current + adding > max_entries {
+        let available = (max_entries - current).max(0);
+        if adding == 1 {
+            return Err(format!(
+                "Cannot add more {}. Maximum is {} {} ({} courts × {}).",
+                noun, max_entries, noun, number_of_courts, per_court
+            ));
+        }
+        return Err(format!(
+            "Cannot import {} {}. Maximum is {} {} ({} courts × {}). Currently have {}, only {} slots available.",
+            adding, noun, max_entries, noun, number_of_courts, per_court, current, available
+        ));
+    }
+
+    Ok(())
 }
 
 /// Resolves the team number to use for a create/update: validates an
@@ -218,10 +252,20 @@ pub fn update_team(db: State<Database>, id: String, data: CreateTeamData) -> Res
             player2 = ?4,
             player3 = ?5,
             region = ?6,
-            club = ?7
+            club = ?7,
+            is_champion = COALESCE(?8, is_champion)
         WHERE id = ?1
         "#,
-        params![id, team_number, data.captain, data.player2, data.player3, data.region, data.club],
+        params![
+            id,
+            team_number,
+            data.captain,
+            data.player2,
+            data.player3,
+            data.region,
+            data.club,
+            data.is_champion.map(|c| if c { 1 } else { 0 })
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -268,34 +312,7 @@ pub fn import_teams(
 ) -> Result<i32, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Get tournament's number of courts
-    let number_of_courts: i32 = conn
-        .query_row(
-            "SELECT number_of_courts FROM tournaments WHERE id = ?1",
-            params![tournament_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // Get current team count
-    let current_team_count: i32 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
-            params![tournament_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // Check if importing all teams would exceed the limit (2x courts)
-    let max_teams = number_of_courts * 2;
-    let teams_to_import = teams.len() as i32;
-    if current_team_count + teams_to_import > max_teams {
-        let available_slots = max_teams - current_team_count;
-        return Err(format!(
-            "Cannot import {} teams. Maximum is {} teams ({} courts × 2). Currently have {} teams, only {} slots available.",
-            teams_to_import, max_teams, number_of_courts, current_team_count, available_slots
-        ));
-    }
+    check_roster_capacity(&conn, &tournament_id, teams.len() as i32)?;
 
     let now = Utc::now().to_rfc3339();
     let mut count = 0;
@@ -306,8 +323,8 @@ pub fn import_teams(
 
         conn.execute(
             r#"
-            INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 id,
@@ -318,6 +335,7 @@ pub fn import_teams(
                 team_data.player3,
                 team_data.region,
                 team_data.club,
+                if team_data.is_champion.unwrap_or(false) { 1 } else { 0 },
                 now,
             ],
         )
@@ -417,7 +435,7 @@ pub fn delete_all_teams(db: State<Database>, tournament_id: String) -> Result<()
 pub fn get_team_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Team>, String> {
     match conn.query_row(
         r#"
-        SELECT id, tournament_id, team_number, captain, player2, player3, region, club, created_at
+        SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
         FROM teams
         WHERE id = ?1
         "#,
@@ -432,7 +450,8 @@ pub fn get_team_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Te
                 player3: row.get(5)?,
                 region: row.get(6)?,
                 club: row.get(7)?,
-                created_at: row.get(8)?,
+                is_champion: row.get::<_, i32>(8)? != 0,
+                created_at: row.get(9)?,
             })
         },
     ) {

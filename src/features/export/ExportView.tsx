@@ -10,7 +10,7 @@ import { CourtAssignmentsPDF } from './CourtAssignmentsPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
 import type { PDFTranslations } from './pdfTranslations';
-import type { QualifyingGame } from '../../types';
+import type { GameWithTeams, Team } from '../../types';
 
 interface ExportViewProps {
   tournamentId: string;
@@ -61,8 +61,17 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     legendDifferential: t('pdf.legendDifferential'),
     legendBuchholz: t('pdf.legendBuchholz'),
     legendFineBuchholz: t('pdf.legendFineBuchholz'),
+    legendPointQuotient: t('pdf.legendPointQuotient'),
     tiebreaker: t('pdf.tiebreaker'),
+    tiebreakerSwiss: t('pdf.tiebreakerSwiss'),
+    tiebreakerPointQuotient: t('pdf.tiebreakerPointQuotient'),
+    tiebreakerPanache: t('pdf.tiebreakerPanache'),
     courtAssignments: t('pdf.courtAssignments'),
+    buchholz: t('pdf.buchholz'),
+    fineBuchholz: t('pdf.fineBuchholz'),
+    pointQuotient: t('pdf.pointQuotient'),
+    player: t('pdf.player'),
+    sittingOut: t('pdf.sittingOut'),
   }), [t]);
 
   // Helper to write file, removing existing file first if needed
@@ -78,13 +87,24 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   };
 
   // Fetch all games for all rounds
-  const fetchAllGames = async (): Promise<QualifyingGame[]> => {
-    const allGames: QualifyingGame[] = [];
+  const fetchAllGames = async (): Promise<GameWithTeams[]> => {
+    const allGames: GameWithTeams[] = [];
     for (const round of qualifyingRounds) {
-      const games = await invoke<QualifyingGame[]>('get_games_for_round', { roundId: round.id });
+      const games = await invoke<GameWithTeams[]>('get_games_for_round', { roundId: round.id });
       allGames.push(...games);
     }
     return allGames;
+  };
+
+  // Panache rests surplus players each round; they belong on the court sheet even
+  // though they have no game. Other formats return nothing here.
+  const fetchAllSitouts = async (): Promise<Record<string, Team[]>> => {
+    if (currentTournament?.pairingMethod !== 'panache') return {};
+    const byRound: Record<string, Team[]> = {};
+    for (const round of qualifyingRounds) {
+      byRound[round.id] = await invoke<Team[]>('get_sitouts_for_round', { roundId: round.id });
+    }
+    return byRound;
   };
 
   const downloadPDF = async (pdfDocument: Parameters<typeof pdf>[0], defaultFilename: string) => {
@@ -119,6 +139,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     try {
       // Fetch all games for all rounds
       const allGames = await fetchAllGames();
+      const allSitouts = await fetchAllSitouts();
 
       const doc = (
         <CourtAssignmentsPDF
@@ -126,6 +147,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           teams={teams}
           rounds={qualifyingRounds}
           games={allGames}
+          sitouts={allSitouts}
           translations={pdfTranslations}
         />
       );
@@ -253,7 +275,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-500 mb-4">
-              Export current standings with wins, points, and rankings.
+              {t('export.standingsDescription')}
             </p>
             <Button
               onClick={handleExportStandings}
@@ -264,22 +286,22 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('export.brackets')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-500 mb-4">
-              Export elimination bracket(s) with seeding and results.
-            </p>
-            <Button
-              onClick={handleExportBrackets}
-              disabled={brackets.length === 0 || exporting}
-            >
-              {exporting ? t('common.loading') : t('export.generatePDF')}
-            </Button>
-          </CardContent>
-        </Card>
+        {currentTournament?.pairingMethod !== 'panache' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('export.brackets')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-500 mb-4">{t('export.bracketsDescription')}</p>
+              <Button
+                onClick={handleExportBrackets}
+                disabled={brackets.length === 0 || exporting}
+              >
+                {exporting ? t('common.loading') : t('export.generatePDF')}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
@@ -287,7 +309,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-500 mb-4">
-              Download a complete JSON backup of the tournament data.
+              {t('export.fullBackupDescription')}
             </p>
             <Button onClick={handleExportFullBackup} disabled={exporting}>
               {exporting ? t('common.loading') : t('export.downloadJSON')}

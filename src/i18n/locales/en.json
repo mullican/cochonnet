@@ -31,7 +31,8 @@
     "teams": "Teams",
     "qualifying": "Qualifying Rounds",
     "brackets": "Elimination Rounds",
-    "export": "Export"
+    "export": "Export",
+    "players": "Players"
   },
   "tournaments": {
     "title": "Tournaments",
@@ -80,7 +81,8 @@
       "swiss": "Swiss System",
       "swissHotel": "Rounds",
       "roundRobin": "Round Robin",
-      "poolPlay": "Pool Play"
+      "poolPlay": "Pool Play",
+      "panache": "Panaché"
     },
     "regionAvoidance": "Avoid Same-Region Matchups",
     "numberOfQualifyingRounds": "Number of Qualifying Rounds",
@@ -91,28 +93,37 @@
   "teams": {
     "title": "Teams",
     "add": "Add Team",
+    "playersTitle": "Players",
     "edit": "Edit Team",
+    "addPlayer": "Add Player",
     "import": "Import Teams",
     "importCSV": "Import from CSV",
     "downloadTemplate": "Download Template",
     "teamNumber": "Team Number",
     "captain": "Captain",
     "player2": "Player 2",
+    "player": "Player",
     "player3": "Player 3",
+    "champion": "Champion",
     "region": "Region",
+    "championHint": "Champion (an expert the draw keeps off other champions’ teams)",
     "club": "Club",
     "noTeams": "No teams registered. Import teams from CSV or add them manually.",
     "deleteConfirm": "Are you sure you want to delete this team?",
+    "noPlayers": "No players registered yet.",
     "deleteAll": "Delete All Teams",
     "deleteAllConfirm": "Are you sure you want to delete all teams? This cannot be undone.",
     "importSuccess": "Successfully imported {{count}} teams",
-    "importError": "Error importing teams: {{error}}"
+    "importError": "Error importing teams: {{error}}",
+    "importMissingFields": "Some teams are missing required fields (captain, player 2)",
+    "importMissingName": "Some rows are missing a name"
   },
   "pairing": {
     "title": "Qualifying Rounds",
     "round": "Round {{number}}",
     "generatePairings": "Generate Pairings",
     "regenerate": "Regenerate",
+    "generateAllRounds": "Generate All Rounds",
     "deleteRounds": "Delete Rounds",
     "deleteRoundsConfirm": "Are you sure you want to delete all qualifying rounds? This cannot be undone.",
     "court": "Court",
@@ -134,7 +145,15 @@
     "generateNextRound": "Generate Next Round",
     "eliminated": "Eliminated",
     "qualified": "Qualified",
-    "noRounds": "No qualifying rounds yet. Generate pairings to start the first round."
+    "noRounds": "No qualifying rounds yet. Generate pairings to start the first round.",
+    "generateFinal": "Draw the Final",
+    "final": "Final",
+    "redraw": "Redraw",
+    "redrawFrom": "Re-shuffle round {{number}} and every round after it",
+    "redrawConfirm": "This re-shuffles round {{number}} and every round after it against the current roster. Completed rounds are left as they were drawn.",
+    "sittingOut": "Sitting out",
+    "notEnoughPlayers": "At least {{count}} players are needed before rounds can be drawn.",
+    "noStandings": "No standings yet. Complete a qualifying round to see standings."
   },
   "brackets": {
     "title": "Elimination Rounds",
@@ -158,7 +177,10 @@
     "brackets": "Brackets",
     "fullBackup": "Full Tournament Backup",
     "generatePDF": "Generate PDF",
-    "downloadJSON": "Download JSON"
+    "downloadJSON": "Download JSON",
+    "standingsDescription": "Export current standings with wins, points, and rankings.",
+    "bracketsDescription": "Export elimination bracket(s) with seeding and results.",
+    "fullBackupDescription": "Download a complete JSON backup of the tournament data."
   },
   "pdf": {
     "courtAssignments": "Court Assignments",
@@ -194,7 +216,13 @@
     "legendPointQuotient": "PQ = Point Quotient (Points For / Points Against)",
     "tiebreakerSwiss": "Tie-breaker order: Wins → Buchholz → Fine Buchholz → Differential → Random",
     "tiebreakerPointQuotient": "Tie-breaker order: Wins → Differential → Point Quotient → Random",
-    "tiebreaker": "Tie-breaker order: Wins → Buchholz → Fine Buchholz → Differential → Random"
+    "tiebreaker": "Tie-breaker order: Wins → Buchholz → Fine Buchholz → Differential → Random",
+    "player": "Player",
+    "sittingOut": "Sitting out",
+    "buchholz": "Buch",
+    "fineBuchholz": "FBuch",
+    "pointQuotient": "PQ",
+    "tiebreakerPanache": "Ties broken by: wins, then point differential."
   },
   "validation": {
     "required": "This field is required",

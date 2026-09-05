@@ -1,7 +1,7 @@
 export type TeamComposition = 'men' | 'women' | 'mixed' | 'select';
 export type TournamentType = 'regional' | 'national' | 'open' | 'club';
 export type TournamentFormat = 'single' | 'double' | 'triple';
-export type PairingMethod = 'swiss' | 'swissHotel' | 'roundRobin' | 'poolPlay';
+export type PairingMethod = 'swiss' | 'swissHotel' | 'roundRobin' | 'poolPlay' | 'panache';
 export type BracketSize = 4 | 8 | 16 | 32;
 
 export interface Tournament {
@@ -32,6 +32,11 @@ export interface Umpire {
   name: string;
 }
 
+/**
+ * A registered competitor. In panache the roster is individuals, so a Team is one
+ * player: `captain` holds the name and `player2` is empty, exactly as singles
+ * registration already works.
+ */
 export interface Team {
   id: string;
   tournamentId: string;
@@ -41,6 +46,8 @@ export interface Team {
   player3: string | null;
   region: string | null;
   club: string | null;
+  /** Panache only: an expert the draw keeps off the same team as other champions. */
+  isChampion: boolean;
   createdAt: string;
 }
 
@@ -49,6 +56,8 @@ export interface QualifyingRound {
   tournamentId: string;
   roundNumber: number;
   isComplete: boolean;
+  /** Panache only: the single championship game played after the qualifying rounds. */
+  isFinal: boolean;
   createdAt: string;
 }
 
@@ -61,6 +70,16 @@ export interface QualifyingGame {
   team1Score: number | null;
   team2Score: number | null;
   isBye: boolean;
+  /** Panache only: for these games team1Id/team2Id are null and the sides are temporary teams. */
+  side1Id: string | null;
+  side2Id: string | null;
+}
+
+/** One temporary panache team, drawn fresh for a single round. */
+export interface PanacheSide {
+  id: string;
+  teamIndex: number;
+  members: Team[];
 }
 
 export interface TeamStanding {
@@ -148,6 +167,7 @@ export interface TeamFormData {
   player3: string;
   region: string;
   club: string;
+  isChampion: boolean;
 }
 
 // CSV Import
@@ -158,6 +178,10 @@ export interface CSVTeamRow {
   player3?: string;
   region?: string;
   club?: string;
+  /** Panache roster column; any of "1", "true", "yes", "y", "x" marks a champion. */
+  champion?: string;
+  /** Panache rosters name the column "name" rather than "captain". */
+  name?: string;
 }
 
 // Standings with team details
@@ -169,6 +193,9 @@ export interface StandingWithTeam extends TeamStanding {
 export interface GameWithTeams extends QualifyingGame {
   team1: Team | null;
   team2: Team | null;
+  /** Panache only; null for every other format. */
+  side1: PanacheSide | null;
+  side2: PanacheSide | null;
 }
 
 // Match with team details

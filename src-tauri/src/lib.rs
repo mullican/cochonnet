@@ -49,6 +49,12 @@ pub fn run() {
             commands::generate_brackets,
             commands::delete_brackets,
             commands::update_match_score,
+            // Panache commands
+            commands::generate_panache_rounds,
+            commands::redraw_panache_rounds,
+            commands::generate_panache_final,
+            commands::get_sitouts_for_round,
+            commands::set_team_champion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

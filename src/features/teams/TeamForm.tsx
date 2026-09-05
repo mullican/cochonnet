@@ -1,24 +1,24 @@
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { Button, Input } from '../../components/ui';
-
-interface TeamFormData {
-  teamNumber: string;
-  captain: string;
-  player2: string;
-  player3: string;
-  region: string;
-  club: string;
-}
+import type { TeamFormData } from '../../types';
 
 interface TeamFormProps {
   defaultValues?: Partial<TeamFormData>;
   showPlayer3?: boolean;
+  /** Panache registers individuals: one name, no partners, plus a champion flag. */
+  isPanache?: boolean;
   onSubmit: (data: TeamFormData) => void;
   onCancel: () => void;
 }
 
-export function TeamForm({ defaultValues, showPlayer3 = true, onSubmit, onCancel }: TeamFormProps) {
+export function TeamForm({
+  defaultValues,
+  showPlayer3 = true,
+  isPanache = false,
+  onSubmit,
+  onCancel,
+}: TeamFormProps) {
   const { t } = useTranslation();
 
   const {
@@ -33,6 +33,7 @@ export function TeamForm({ defaultValues, showPlayer3 = true, onSubmit, onCancel
       player3: '',
       region: '',
       club: '',
+      isChampion: false,
       ...defaultValues,
     },
   });
@@ -65,22 +66,38 @@ export function TeamForm({ defaultValues, showPlayer3 = true, onSubmit, onCancel
       />
 
       <Input
-        label={t('teams.captain')}
+        label={isPanache ? t('teams.player') : t('teams.captain')}
         {...register('captain', { validate: validateRequired })}
         error={errors.captain?.message}
       />
 
-      <Input
-        label={t('teams.player2')}
-        {...register('player2', { validate: validateRequired })}
-        error={errors.player2?.message}
-      />
+      {!isPanache && (
+        <Input
+          label={t('teams.player2')}
+          {...register('player2', { validate: validateRequired })}
+          error={errors.player2?.message}
+        />
+      )}
 
-      {showPlayer3 && (
+      {!isPanache && showPlayer3 && (
         <Input
           label={t('teams.player3')}
           {...register('player3')}
         />
+      )}
+
+      {isPanache && (
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="isChampion"
+            {...register('isChampion')}
+            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <label htmlFor="isChampion" className="text-sm text-gray-700">
+            {t('teams.championHint')}
+          </label>
+        </div>
       )}
 
       <Input

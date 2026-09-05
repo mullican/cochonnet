@@ -7,7 +7,8 @@ import {
   CardContent,
   Input,
 } from '../../components/ui';
-import { formatTeamLabel } from '../../lib/utils';
+import { formatTeamLabel, formatTeamName } from '../../lib/utils';
+import type { PanacheSide } from '../../types';
 
 interface RoundGamesProps {
   roundId: string;
@@ -25,6 +26,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     completeRound,
     fetchStandings,
     fetchQualifyingRounds,
+    qualifyingSitouts,
+    fetchSitoutsForRound,
   } = useTournamentStore();
 
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
@@ -35,7 +38,9 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     setScores({});
     setInitialLoading(true);
     fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
-  }, [roundId, fetchGamesForRound]);
+    // Panache rounds may rest surplus players; other formats return an empty list.
+    fetchSitoutsForRound(roundId);
+  }, [roundId, fetchGamesForRound, fetchSitoutsForRound]);
 
   useEffect(() => {
     setScores((prevScores) => {
@@ -72,6 +77,30 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     if (!teamId) return 'TBD';
     const team = teams.find((t) => t.id === teamId);
     return formatTeamLabel(team);
+  };
+
+  /**
+   * One side of a game. Panache draws a temporary team, so its members are listed
+   * one per line; every other format shows the registered team's number and name.
+   */
+  const SideLabel = ({
+    side,
+    teamId,
+  }: {
+    side: PanacheSide | null | undefined;
+    teamId: string | null | undefined;
+  }) => {
+    if (!side) return <div className="font-medium truncate">{getTeamName(teamId)}</div>;
+    return (
+      <div className="font-medium leading-tight">
+        {side.members.map((member) => (
+          <div key={member.id} className="truncate">
+            {formatTeamName(member.captain)}
+            {member.isChampion && <span className="ml-1 text-amber-600">★</span>}
+          </div>
+        ))}
+      </div>
+    );
   };
 
   const handleScoreChange = (gameId: string, team: 'team1' | 'team2', value: string) => {
@@ -136,6 +165,15 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
 
   return (
     <div className="space-y-4">
+      {qualifyingSitouts.length > 0 && (
+        <div className="rounded-md bg-gray-50 px-4 py-3 text-sm">
+          <span className="font-medium text-gray-700">{t('pairing.sittingOut')}: </span>
+          <span className="text-gray-600">
+            {qualifyingSitouts.map((p) => formatTeamName(p.captain)).join(', ')}
+          </span>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {qualifyingGames.map((game) => (
           <Card key={game.id}>
@@ -153,10 +191,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
               ) : (
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <div className="font-medium truncate">
-                        {getTeamName(game.team1Id)}
-                      </div>
+                    <div className="flex-1 min-w-0">
+                      <SideLabel side={game.side1} teamId={game.team1Id} />
                     </div>
                     <Input
                       type="number"
@@ -175,10 +211,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <div className="font-medium truncate">
-                        {getTeamName(game.team2Id)}
-                      </div>
+                    <div className="flex-1 min-w-0">
+                      <SideLabel side={game.side2} teamId={game.team2Id} />
                     </div>
                     <Input
                       type="number"

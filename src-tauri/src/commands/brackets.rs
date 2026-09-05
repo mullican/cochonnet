@@ -175,6 +175,20 @@ pub fn delete_brackets(db: State<Database>, tournament_id: String) -> Result<(),
 pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    let pairing_method: String = conn
+        .query_row(
+            "SELECT pairing_method FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if pairing_method == "panache" {
+        return Err(
+            "Panaché has no elimination bracket. Draw the final game from the standings instead."
+                .to_string(),
+        );
+    }
+
     // Get tournament settings
     let (advance_all, advance_count, bracket_size, number_of_courts, has_consolante): (bool, Option<i32>, i32, i32, bool) =
         conn.query_row(
@@ -196,7 +210,7 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3, t.region, t.club, t.created_at
+            SELECT t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3, t.region, t.club, t.is_champion, t.created_at
             FROM teams t
             JOIN team_standings ts ON t.id = ts.team_id AND t.tournament_id = ts.tournament_id
             WHERE t.tournament_id = ?1
@@ -216,7 +230,8 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
                 player3: row.get(5)?,
                 region: row.get(6)?,
                 club: row.get(7)?,
-                created_at: row.get(8)?,
+                is_champion: row.get::<_, i32>(8)? != 0,
+                created_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?

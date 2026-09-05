@@ -36,6 +36,9 @@ export function TournamentDetail() {
   } = useTournamentStore();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
+  // Panache registers individuals and has no elimination bracket.
+  const isPanache = currentTournament?.pairingMethod === 'panache';
+
   useEffect(() => {
     if (id) {
       fetchTournament(id);
@@ -141,9 +144,12 @@ export function TournamentDetail() {
 
       <Tabs defaultValue="teams">
         <TabsList>
-          <TabsTrigger value="teams">{t('nav.teams')}</TabsTrigger>
+          <TabsTrigger value="teams">
+            {isPanache ? t('nav.players') : t('nav.teams')}
+          </TabsTrigger>
           <TabsTrigger value="qualifying">{t('nav.qualifying')}</TabsTrigger>
-          <TabsTrigger value="brackets">{t('nav.brackets')}</TabsTrigger>
+          {/* Panache ends with a single final game, so there is no bracket to show. */}
+          {!isPanache && <TabsTrigger value="brackets">{t('nav.brackets')}</TabsTrigger>}
           <TabsTrigger value="export">{t('nav.export')}</TabsTrigger>
         </TabsList>
 
@@ -155,9 +161,11 @@ export function TournamentDetail() {
           <QualifyingRounds tournamentId={id!} />
         </TabsContent>
 
-        <TabsContent value="brackets" className="mt-4">
-          <BracketView tournamentId={id!} />
-        </TabsContent>
+        {!isPanache && (
+          <TabsContent value="brackets" className="mt-4">
+            <BracketView tournamentId={id!} />
+          </TabsContent>
+        )}
 
         <TabsContent value="export" className="mt-4">
           <ExportView tournamentId={id!} />

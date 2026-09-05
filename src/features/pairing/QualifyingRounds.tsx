@@ -31,6 +31,9 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     fetchQualifyingRounds,
     generateAllQualifyingRounds,
     generatePairings,
+    generatePanacheRounds,
+    redrawPanacheRounds,
+    generatePanacheFinal,
     deleteAllQualifyingRounds,
     fetchStandings,
     teams,
@@ -40,6 +43,8 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [redrawFromRound, setRedrawFromRound] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQualifyingRounds(tournamentId);
@@ -73,6 +78,41 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   };
 
+  const handleGeneratePanacheRounds = async () => {
+    setActionError(null);
+    try {
+      const rounds = await generatePanacheRounds(tournamentId);
+      if (rounds.length > 0) {
+        setSelectedRoundId(rounds[0].id);
+      }
+    } catch (error) {
+      setActionError(String(error));
+    }
+  };
+
+  const handleRedrawRounds = async () => {
+    if (redrawFromRound === null) return;
+    setActionError(null);
+    try {
+      const rounds = await redrawPanacheRounds(tournamentId, redrawFromRound);
+      setRedrawFromRound(null);
+      setSelectedRoundId(rounds.length > 0 ? rounds[0].id : null);
+    } catch (error) {
+      setActionError(String(error));
+      setRedrawFromRound(null);
+    }
+  };
+
+  const handleGenerateFinal = async () => {
+    setActionError(null);
+    try {
+      const round = await generatePanacheFinal(tournamentId);
+      setSelectedRoundId(round.id);
+    } catch (error) {
+      setActionError(String(error));
+    }
+  };
+
   const handleDeleteRounds = async () => {
     setDeleteError(null);
     try {
@@ -84,9 +124,14 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   };
 
-  const canGeneratePairings = teams.length >= 2;
-  const hasRounds = qualifyingRounds.length > 0;
   const pairingMethod = currentTournament?.pairingMethod || 'swiss';
+  const isPanache = pairingMethod === 'panache';
+
+  // Panache needs enough individuals to fill both sides of one game.
+  const panacheTeamSize = currentTournament?.format === 'triple' ? 3 : 2;
+  const minimumEntrants = isPanache ? panacheTeamSize * 2 : 2;
+  const canGeneratePairings = teams.length >= minimumEntrants;
+  const hasRounds = qualifyingRounds.length > 0;
 
   // Check if any games have scores - if so, deletion is not allowed
   const hasScores = qualifyingGames.some(
@@ -104,9 +149,20 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     (!lastRound || lastRound.isComplete) &&
     qualifyingRounds.length < maxRounds;
 
+  // Panache draws the whole schedule at once, then a single final game once every
+  // qualifying round has been scored.
+  const qualifyingOnlyRounds = qualifyingRounds.filter((r) => !r.isFinal);
+  const hasFinal = qualifyingRounds.some((r) => r.isFinal);
+  const allQualifyingComplete =
+    qualifyingOnlyRounds.length > 0 && qualifyingOnlyRounds.every((r) => r.isComplete);
+
+  const selectedRound = qualifyingRounds.find((r) => r.id === selectedRoundId) || null;
+
   // Determine which generate button to show
-  const showGenerateAllButton = !hasRounds && !requiresRoundByRound;
+  const showGenerateAllButton = !hasRounds && !requiresRoundByRound && !isPanache;
   const showGenerateNextButton = requiresRoundByRound && canGenerateNextRound;
+  const showGeneratePanacheButton = isPanache && !hasRounds;
+  const showGenerateFinalButton = isPanache && allQualifyingComplete && !hasFinal;
 
   return (
     <div className="space-y-6">
@@ -138,13 +194,32 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
               {t('pairing.generateNextRound')}
             </Button>
           )}
+          {showGeneratePanacheButton && (
+            <Button
+              onClick={handleGeneratePanacheRounds}
+              disabled={!canGeneratePairings || loading}
+            >
+              {t('pairing.generateAllRounds')}
+            </Button>
+          )}
+          {showGenerateFinalButton && (
+            <Button onClick={handleGenerateFinal} disabled={loading}>
+              {t('pairing.generateFinal')}
+            </Button>
+          )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">{actionError}</div>
+      )}
 
       {!canGeneratePairings && (
         <Card>
           <CardContent className="py-8 text-center text-gray-500">
-            {t('teams.noTeams')}
+            {isPanache
+              ? t('pairing.notEnoughPlayers', { count: minimumEntrants })
+              : t('teams.noTeams')}
           </CardContent>
         </Card>
       )}
@@ -166,7 +241,7 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
 
           <TabsContent value="rounds" className="mt-4">
             <div className="space-y-4">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {qualifyingRounds.map((round) => (
                   <Button
                     key={round.id}
@@ -174,11 +249,31 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
                     size="sm"
                     onClick={() => setSelectedRoundId(round.id)}
                   >
-                    {t('pairing.round', { number: round.roundNumber })}
+                    {round.isFinal
+                      ? t('pairing.final')
+                      : t('pairing.round', { number: round.roundNumber })}
                     {round.isComplete && ' ✓'}
                   </Button>
                 ))}
               </div>
+
+              {/* A panache round that has not been scored can be re-shuffled against
+                  the current roster; earlier rounds are held as drawn. */}
+              {isPanache && selectedRound && !selectedRound.isFinal && !selectedRound.isComplete && !hasScores && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span>
+                    {t('pairing.redrawFrom', { number: selectedRound.roundNumber })}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setRedrawFromRound(selectedRound.roundNumber)}
+                    disabled={loading}
+                  >
+                    {t('pairing.redraw')}
+                  </Button>
+                </div>
+              )}
 
               {selectedRoundId && (
                 <RoundGames
@@ -197,6 +292,29 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
           </TabsContent>
         </Tabs>
       )}
+
+      {/* Redraw Confirmation Dialog */}
+      <Dialog
+        open={redrawFromRound !== null}
+        onOpenChange={(open) => !open && setRedrawFromRound(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('pairing.redraw')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-500">
+            {t('pairing.redrawConfirm', { number: redrawFromRound ?? 0 })}
+          </p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setRedrawFromRound(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleRedrawRounds} disabled={loading}>
+              {t('pairing.redraw')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Rounds Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

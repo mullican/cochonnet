@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::models::{GameWithTeams, QualifyingGame, QualifyingRound, Team, TeamStanding};
+use crate::models::{GameWithTeams, PanacheSide, QualifyingGame, QualifyingRound, Team, TeamStanding};
 use crate::commands::teams::get_team_by_id;
 use chrono::Utc;
 use rand::seq::SliceRandom;
@@ -19,7 +19,7 @@ pub fn get_qualifying_rounds(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, round_number, is_complete, created_at
+            SELECT id, tournament_id, round_number, is_complete, is_final, created_at
             FROM qualifying_rounds
             WHERE tournament_id = ?1
             ORDER BY round_number ASC
@@ -34,7 +34,8 @@ pub fn get_qualifying_rounds(
                 tournament_id: row.get(1)?,
                 round_number: row.get(2)?,
                 is_complete: row.get::<_, i32>(3)? != 0,
-                created_at: row.get(4)?,
+                is_final: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -54,7 +55,8 @@ pub fn get_games_for_round(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, round_id, court_number, team1_id, team2_id, team1_score, team2_score, is_bye
+            SELECT id, round_id, court_number, team1_id, team2_id, team1_score, team2_score, is_bye,
+                   side1_id, side2_id
             FROM qualifying_games
             WHERE round_id = ?1
             ORDER BY court_number ASC
@@ -73,11 +75,18 @@ pub fn get_games_for_round(
                 team1_score: row.get(5)?,
                 team2_score: row.get(6)?,
                 is_bye: row.get::<_, i32>(7)? != 0,
+                side1_id: row.get(8)?,
+                side2_id: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Panache games reference temporary teams rather than registered teams. Load
+    // every side for the round in one pass instead of extending the per-game
+    // lookups below.
+    let sides = load_panache_sides(&conn, &round_id)?;
 
     // Fetch team details
     let mut games_with_teams = Vec::new();
@@ -93,6 +102,15 @@ pub fn get_games_for_round(
             None
         };
 
+        let side1 = game
+            .side1_id
+            .as_ref()
+            .and_then(|id| sides.get(id).cloned());
+        let side2 = game
+            .side2_id
+            .as_ref()
+            .and_then(|id| sides.get(id).cloned());
+
         games_with_teams.push(GameWithTeams {
             id: game.id,
             round_id: game.round_id,
@@ -104,10 +122,73 @@ pub fn get_games_for_round(
             is_bye: game.is_bye,
             team1,
             team2,
+            side1,
+            side2,
         });
     }
 
     Ok(games_with_teams)
+}
+
+/// Loads every panache temporary team in a round, keyed by side id.
+///
+/// Returns an empty map for the team formats, whose games carry no side ids.
+fn load_panache_sides(
+    conn: &rusqlite::Connection,
+    round_id: &str,
+) -> Result<HashMap<String, PanacheSide>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT pt.id, pt.team_index,
+                   t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3,
+                   t.region, t.club, t.is_champion, t.created_at
+            FROM panache_teams pt
+            JOIN panache_team_members ptm ON ptm.panache_team_id = pt.id
+            JOIN teams t ON t.id = ptm.team_id
+            WHERE pt.round_id = ?1
+            ORDER BY pt.team_index ASC, ptm.position ASC
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![round_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i32>(1)?,
+                Team {
+                    id: row.get(2)?,
+                    tournament_id: row.get(3)?,
+                    team_number: row.get(4)?,
+                    captain: row.get(5)?,
+                    player2: row.get(6)?,
+                    player3: row.get(7)?,
+                    region: row.get(8)?,
+                    club: row.get(9)?,
+                    is_champion: row.get::<_, i32>(10)? != 0,
+                    created_at: row.get(11)?,
+                },
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut sides: HashMap<String, PanacheSide> = HashMap::new();
+    for (side_id, team_index, member) in rows {
+        sides
+            .entry(side_id.clone())
+            .or_insert_with(|| PanacheSide {
+                id: side_id,
+                team_index,
+                members: Vec::new(),
+            })
+            .members
+            .push(member);
+    }
+
+    Ok(sides)
 }
 
 #[tauri::command]
@@ -141,6 +222,9 @@ pub fn generate_all_qualifying_rounds(
     }
     if pairing_method == "poolPlay" {
         return Err("Pool Play requires round-by-round generation. Use 'Generate Next Round' instead.".to_string());
+    }
+    if pairing_method == "panache" {
+        return Err("Panaché draws its whole schedule at once. Use 'Generate All Rounds' for Panaché instead.".to_string());
     }
 
     // Get current round number
@@ -221,7 +305,7 @@ fn generate_single_round(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
             FROM teams
             WHERE tournament_id = ?1
             "#,
@@ -239,7 +323,8 @@ fn generate_single_round(
                 player3: row.get(5)?,
                 region: row.get(6)?,
                 club: row.get(7)?,
-                created_at: row.get(8)?,
+                is_champion: row.get::<_, i32>(8)? != 0,
+                created_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -308,6 +393,12 @@ fn generate_single_round(
         "swissHotel" => generate_swiss_hotel_pairings(&teams, &pairing_history, region_avoidance, new_round_number)?,
         "roundRobin" => generate_round_robin_pairings(&teams, new_round_number)?,
         "poolPlay" => generate_pool_play_round(&teams, &standings, &pairing_history, region_avoidance, new_round_number)?,
+        "panache" => {
+            return Err(
+                "Panaché rounds are drawn by the Panaché scheduler, not round-by-round pairing."
+                    .to_string(),
+            )
+        }
         _ => return Err(format!("Unknown pairing method: {}", pairing_method)),
     };
 
@@ -320,8 +411,8 @@ fn generate_single_round(
 
     conn.execute(
         r#"
-        INSERT INTO qualifying_rounds (id, tournament_id, round_number, is_complete, created_at)
-        VALUES (?1, ?2, ?3, 0, ?4)
+        INSERT INTO qualifying_rounds (id, tournament_id, round_number, is_complete, is_final, created_at)
+        VALUES (?1, ?2, ?3, 0, 0, ?4)
         "#,
         params![round_id, tournament_id, new_round_number, now],
     )
@@ -383,6 +474,7 @@ fn generate_single_round(
         tournament_id: tournament_id.to_string(),
         round_number: new_round_number,
         is_complete: false,
+        is_final: false,
         created_at: now,
     })
 }
@@ -884,31 +976,50 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Get tournament ID and pairing method
-    let (tournament_id, pairing_method): (String, String) = conn
+    let (tournament_id, pairing_method, is_final): (String, String, bool) = conn
         .query_row(
             r#"
-            SELECT qr.tournament_id, t.pairing_method
+            SELECT qr.tournament_id, t.pairing_method, qr.is_final
             FROM qualifying_rounds qr
             JOIN tournaments t ON qr.tournament_id = t.id
             WHERE qr.id = ?1
             "#,
             params![round_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i32>(2)? != 0)),
         )
         .map_err(|e| e.to_string())?;
+
+    // The panache final names the champions; it does not reopen the qualifying
+    // standings, the same way bracket results don't feed back into them.
+    if is_final {
+        conn.execute(
+            "UPDATE qualifying_rounds SET is_complete = 1 WHERE id = ?1",
+            params![round_id],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
 
     // Get all games for this round
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT team1_id, team2_id, team1_score, team2_score, is_bye
+            SELECT team1_id, team2_id, team1_score, team2_score, is_bye, side1_id, side2_id
             FROM qualifying_games
             WHERE round_id = ?1
             "#,
         )
         .map_err(|e| e.to_string())?;
 
-    let games: Vec<(Option<String>, Option<String>, Option<i32>, Option<i32>, bool)> = stmt
+    let games: Vec<(
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<i32>,
+        bool,
+        Option<String>,
+        Option<String>,
+    )> = stmt
         .query_map(params![round_id], |row| {
             Ok((
                 row.get(0)?,
@@ -916,6 +1027,8 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
                 row.get(2)?,
                 row.get(3)?,
                 row.get::<_, i32>(4)? != 0,
+                row.get(5)?,
+                row.get(6)?,
             ))
         })
         .map_err(|e| e.to_string())?
@@ -923,7 +1036,7 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
         .collect();
 
     // Update standings for each game
-    for (team1_id, team2_id, team1_score, team2_score, is_bye) in games {
+    for (team1_id, team2_id, team1_score, team2_score, is_bye, side1_id, side2_id) in games {
         if is_bye {
             // BYE: team gets a win with 13-7 score (FPUSA rules)
             if let Some(t1) = team1_id {
@@ -940,40 +1053,18 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
                 )
                 .map_err(|e| e.to_string())?;
             }
-        } else if let (Some(t1), Some(t2), Some(s1), Some(s2)) =
-            (team1_id, team2_id, team1_score, team2_score)
-        {
-            // Update team 1
-            let (t1_wins, t1_losses) = if s1 > s2 { (1, 0) } else { (0, 1) };
-            conn.execute(
-                r#"
-                UPDATE team_standings SET
-                    wins = wins + ?3,
-                    losses = losses + ?4,
-                    points_for = points_for + ?5,
-                    points_against = points_against + ?6,
-                    differential = differential + ?7
-                WHERE tournament_id = ?1 AND team_id = ?2
-                "#,
-                params![tournament_id, t1, t1_wins, t1_losses, s1, s2, s1 - s2],
-            )
-            .map_err(|e| e.to_string())?;
-
-            // Update team 2
-            let (t2_wins, t2_losses) = if s2 > s1 { (1, 0) } else { (0, 1) };
-            conn.execute(
-                r#"
-                UPDATE team_standings SET
-                    wins = wins + ?3,
-                    losses = losses + ?4,
-                    points_for = points_for + ?5,
-                    points_against = points_against + ?6,
-                    differential = differential + ?7
-                WHERE tournament_id = ?1 AND team_id = ?2
-                "#,
-                params![tournament_id, t2, t2_wins, t2_losses, s2, s1, s2 - s1],
-            )
-            .map_err(|e| e.to_string())?;
+        } else if let (Some(s1), Some(s2)) = (team1_score, team2_score) {
+            // Panache: the temporary team's result accrues to each member
+            // individually. Everything else scores a single team per side.
+            if let (Some(side1), Some(side2)) = (&side1_id, &side2_id) {
+                let members1 = load_side_member_ids(&conn, side1)?;
+                let members2 = load_side_member_ids(&conn, side2)?;
+                apply_game_result(&conn, &tournament_id, &members1, s1, s2)?;
+                apply_game_result(&conn, &tournament_id, &members2, s2, s1)?;
+            } else if let (Some(t1), Some(t2)) = (&team1_id, &team2_id) {
+                apply_game_result(&conn, &tournament_id, std::slice::from_ref(t1), s1, s2)?;
+                apply_game_result(&conn, &tournament_id, std::slice::from_ref(t2), s2, s1)?;
+            }
         }
     }
 
@@ -992,7 +1083,7 @@ pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), Strin
             // Swiss uses Buchholz tiebreaker
             calculate_buchholz_and_ranks(&conn, &tournament_id)?;
         }
-        "swissHotel" | "roundRobin" | "poolPlay" => {
+        "swissHotel" | "roundRobin" | "poolPlay" | "panache" => {
             // These use point quotient tiebreaker
             calculate_point_quotient_ranks(&conn, &tournament_id)?;
         }
@@ -1063,6 +1154,30 @@ pub fn delete_all_qualifying_rounds(
     )
     .map_err(|e| e.to_string())?;
 
+    // Delete panache sit-outs and temporary teams. These cascade from
+    // qualifying_rounds, but are removed explicitly like the histories above.
+    conn.execute(
+        "DELETE FROM panache_sitouts WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        r#"
+        DELETE FROM panache_team_members WHERE panache_team_id IN (
+            SELECT id FROM panache_teams WHERE tournament_id = ?1
+        )
+        "#,
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM panache_teams WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
     // Delete games (via cascade or explicit)
     conn.execute(
         r#"
@@ -1082,6 +1197,71 @@ pub fn delete_all_qualifying_rounds(
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Adds one game result to every listed competitor's standing row.
+///
+/// For the team formats that is a single team; for panache it is each member of
+/// the temporary team, which is how a shared score becomes an individual record.
+/// A tie counts as a loss for both sides, as it always has here.
+pub(crate) fn apply_game_result(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    competitor_ids: &[String],
+    own_score: i32,
+    opponent_score: i32,
+) -> Result<(), String> {
+    let (wins, losses) = if own_score > opponent_score {
+        (1, 0)
+    } else {
+        (0, 1)
+    };
+
+    for competitor_id in competitor_ids {
+        conn.execute(
+            r#"
+            UPDATE team_standings SET
+                wins = wins + ?3,
+                losses = losses + ?4,
+                points_for = points_for + ?5,
+                points_against = points_against + ?6,
+                differential = differential + ?7
+            WHERE tournament_id = ?1 AND team_id = ?2
+            "#,
+            params![
+                tournament_id,
+                competitor_id,
+                wins,
+                losses,
+                own_score,
+                opponent_score,
+                own_score - opponent_score
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// The individuals making up one panache temporary team.
+pub(crate) fn load_side_member_ids(
+    conn: &rusqlite::Connection,
+    side_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT team_id FROM panache_team_members WHERE panache_team_id = ?1 ORDER BY position ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let ids = stmt
+        .query_map(params![side_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(ids)
 }
 
 fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
@@ -1212,7 +1392,7 @@ fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str
 
 /// Calculate ranks using point quotient tiebreaker (for Swiss Hotel, Round Robin, Pool Play)
 /// Tiebreaker order: wins → differential → point_quotient → random
-fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+pub(crate) fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
     // Get all standings
     let mut stmt = conn
         .prepare(

@@ -51,6 +51,10 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
     name: 'additionalUmpires',
   });
 
+  // Panache has no bracket, and its Format field sets the size of the temporary
+  // teams the draw builds rather than describing a registered team.
+  const isPanache = watch('pairingMethod') === 'panache';
+
   const validateRequired = (value: string) => {
     if (!value || value.trim() === '') {
       return t('validation.required');
@@ -99,8 +103,13 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
               label={t('tournaments.format')}
               value={watch('format')}
               onValueChange={(v) => setValue('format', v as TournamentFormData['format'])}
+              disabled={hasQualifyingRounds && isPanache}
             >
-              <SelectItem value="single">{t('tournaments.formatOptions.single')}</SelectItem>
+              {/* In panache the format sets how many players the draw puts on each
+                  temporary team, so singles has no meaning. */}
+              {!isPanache && (
+                <SelectItem value="single">{t('tournaments.formatOptions.single')}</SelectItem>
+              )}
               <SelectItem value="double">{t('tournaments.formatOptions.double')}</SelectItem>
               <SelectItem value="triple">{t('tournaments.formatOptions.triple')}</SelectItem>
             </Select>
@@ -204,6 +213,11 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
                 if (v === 'poolPlay') {
                   setValue('numberOfQualifyingRounds', 3);
                 }
+                // Panache registers individuals but plays doubles or triples, so a
+                // singles format has nothing to draw teams of.
+                if (v === 'panache' && watch('format') === 'single') {
+                  setValue('format', 'double');
+                }
               }}
               disabled={hasQualifyingRounds}
             >
@@ -211,13 +225,14 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
               <SelectItem value="swissHotel">{t('tournaments.pairingMethodOptions.swissHotel')}</SelectItem>
               <SelectItem value="roundRobin">{t('tournaments.pairingMethodOptions.roundRobin')}</SelectItem>
               <SelectItem value="poolPlay">{t('tournaments.pairingMethodOptions.poolPlay')}</SelectItem>
+              <SelectItem value="panache">{t('tournaments.pairingMethodOptions.panache')}</SelectItem>
             </Select>
 
             <Select
               label={t('tournaments.bracketSize')}
               value={String(watch('bracketSize'))}
               onValueChange={(v) => setValue('bracketSize', parseInt(v))}
-              disabled={hasBrackets}
+              disabled={hasBrackets || isPanache}
             >
               <SelectItem value="4">4</SelectItem>
               <SelectItem value="8">8</SelectItem>
@@ -231,9 +246,9 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
                 id="hasConsolante"
                 {...register('hasConsolante')}
                 className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
-                disabled={hasBrackets}
+                disabled={hasBrackets || isPanache}
               />
-              <label htmlFor="hasConsolante" className={`text-sm ${hasBrackets ? 'text-gray-400' : 'text-gray-700'}`}>
+              <label htmlFor="hasConsolante" className={`text-sm ${hasBrackets || isPanache ? 'text-gray-400' : 'text-gray-700'}`}>
                 {t('tournaments.consolante')}
               </label>
             </div>

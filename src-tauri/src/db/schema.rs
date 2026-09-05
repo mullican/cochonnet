@@ -21,7 +21,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             advance_all INTEGER NOT NULL DEFAULT 1,
             advance_count INTEGER,
             bracket_size INTEGER NOT NULL DEFAULT 16,
-            pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay')),
+            pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay', 'panache')),
             region_avoidance INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -152,6 +152,39 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             FOREIGN KEY (round_id) REFERENCES qualifying_rounds(id) ON DELETE CASCADE
         );
 
+        -- Panache: temporary teams drawn fresh each round.
+        -- Individuals are stored as `teams` rows (captain only); these tables
+        -- hold the throwaway doubles/triples they are shuffled into.
+        CREATE TABLE IF NOT EXISTS panache_teams (
+            id TEXT PRIMARY KEY,
+            tournament_id TEXT NOT NULL,
+            round_id TEXT NOT NULL,
+            team_index INTEGER NOT NULL,
+            FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+            FOREIGN KEY (round_id) REFERENCES qualifying_rounds(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS panache_team_members (
+            id TEXT PRIMARY KEY,
+            panache_team_id TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            FOREIGN KEY (panache_team_id) REFERENCES panache_teams(id) ON DELETE CASCADE,
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+        );
+
+        -- Players sitting out a round because the roster does not divide evenly.
+        -- A sit-out is not a bye: it leaves the player's record untouched.
+        CREATE TABLE IF NOT EXISTS panache_sitouts (
+            id TEXT PRIMARY KEY,
+            tournament_id TEXT NOT NULL,
+            round_id TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+            FOREIGN KEY (round_id) REFERENCES qualifying_rounds(id) ON DELETE CASCADE,
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+        );
+
         -- Create indexes for better query performance
         CREATE INDEX IF NOT EXISTS idx_teams_tournament ON teams(tournament_id);
         CREATE INDEX IF NOT EXISTS idx_qualifying_rounds_tournament ON qualifying_rounds(tournament_id);
@@ -161,6 +194,9 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_bracket_matches_bracket ON bracket_matches(bracket_id);
         CREATE INDEX IF NOT EXISTS idx_pairing_history_tournament ON pairing_history(tournament_id);
         CREATE INDEX IF NOT EXISTS idx_court_history_tournament ON court_history(tournament_id);
+        CREATE INDEX IF NOT EXISTS idx_panache_teams_round ON panache_teams(round_id);
+        CREATE INDEX IF NOT EXISTS idx_panache_team_members_team ON panache_team_members(panache_team_id);
+        CREATE INDEX IF NOT EXISTS idx_panache_sitouts_round ON panache_sitouts(round_id);
         "#,
     )?;
 
@@ -255,8 +291,10 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         )
         .unwrap_or_default();
 
-    // If the table exists and doesn't include 'swissHotel' in the constraint, migrate it
-    if !table_sql.is_empty() && !table_sql.contains("swissHotel") {
+    // If the table exists and doesn't include 'panache' in the constraint, migrate it.
+    // The gate names the newest value, so a single rebuild upgrades every prior schema
+    // version (pre-swissHotel databases included).
+    if !table_sql.is_empty() && !table_sql.contains("panache") {
         conn.execute_batch(
             r#"
             -- Create new table with updated constraint
@@ -277,14 +315,27 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
                 advance_all INTEGER NOT NULL DEFAULT 1,
                 advance_count INTEGER,
                 bracket_size INTEGER NOT NULL DEFAULT 16,
-                pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay')),
+                pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay', 'panache')),
                 region_avoidance INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
-            -- Copy data from old table
-            INSERT INTO tournaments_new SELECT * FROM tournaments;
+            -- Copy data from old table. Columns are listed explicitly: a database old
+            -- enough to have received number_of_qualifying_rounds via ALTER has it
+            -- appended last, so a positional SELECT * would shift every later column.
+            INSERT INTO tournaments_new (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            )
+            SELECT
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            FROM tournaments;
 
             -- Drop old table
             DROP TABLE tournaments;
@@ -336,5 +387,247 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         }
     }
 
+    // Migration: Add is_champion column to teams if it doesn't exist.
+    // Panache lets an operator flag expert players; the flag is what switches the
+    // champion constraints on, so no tournament-level toggle is needed.
+    add_column_if_missing(
+        conn,
+        "teams",
+        "is_champion",
+        "ALTER TABLE teams ADD COLUMN is_champion INTEGER NOT NULL DEFAULT 0",
+    );
+
+    // Migration: Add is_final column to qualifying_rounds if it doesn't exist.
+    // Panache ends with a single final game rather than a bracket; it is stored as
+    // one extra round so score entry and the court-assignment export are reused.
+    add_column_if_missing(
+        conn,
+        "qualifying_rounds",
+        "is_final",
+        "ALTER TABLE qualifying_rounds ADD COLUMN is_final INTEGER NOT NULL DEFAULT 0",
+    );
+
+    // Migration: Add panache side columns to qualifying_games if they don't exist.
+    // For panache games team1_id/team2_id are NULL and these point at panache_teams
+    // instead. No REFERENCES clause: cleanup already happens via the round_id cascade.
+    add_column_if_missing(
+        conn,
+        "qualifying_games",
+        "side1_id",
+        "ALTER TABLE qualifying_games ADD COLUMN side1_id TEXT",
+    );
+    add_column_if_missing(
+        conn,
+        "qualifying_games",
+        "side2_id",
+        "ALTER TABLE qualifying_games ADD COLUMN side2_id TEXT",
+    );
+
     Ok(())
+}
+
+/// Adds a column when the table doesn't already have it.
+///
+/// The older migrations above inline this same pragma_table_info check; new ones
+/// share this helper rather than repeating it.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, alter_sql: &str) {
+    let has_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+            rusqlite::params![table, column],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        conn.execute(alter_sql, []).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The oldest tournaments table, before number_of_qualifying_rounds existed and
+    /// before swissHotel/poolPlay/panache were allowed pairing methods.
+    const LEGACY_TOURNAMENTS_DDL: &str = r#"
+        CREATE TABLE tournaments (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            team_composition TEXT NOT NULL CHECK (team_composition IN ('men', 'women', 'mixed', 'select')),
+            tournament_type TEXT NOT NULL CHECK (tournament_type IN ('regional', 'national', 'open', 'club')),
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            director TEXT NOT NULL,
+            head_umpire TEXT NOT NULL,
+            format TEXT NOT NULL CHECK (format IN ('single', 'double', 'triple')),
+            day_type TEXT NOT NULL CHECK (day_type IN ('single', 'two')),
+            number_of_courts INTEGER NOT NULL,
+            has_consolante INTEGER NOT NULL DEFAULT 0,
+            advance_all INTEGER NOT NULL DEFAULT 1,
+            advance_count INTEGER,
+            bracket_size INTEGER NOT NULL DEFAULT 16,
+            pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'roundRobin')),
+            region_avoidance INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    "#;
+
+    /// Reproduces the worst-case upgrade: a database old enough that
+    /// number_of_qualifying_rounds was appended by ALTER, so its column order does
+    /// not match the rebuild DDL.
+    ///
+    /// A positional `INSERT ... SELECT *` shifts every column after it, which lands
+    /// region_avoidance in pairing_method and trips that column's CHECK. The whole
+    /// rebuild batch then aborts, and because it is invoked with `.ok()` the failure
+    /// is silent: the tournament keeps its data but the table keeps its OLD
+    /// constraint, so creating a panache tournament fails later with no clue why.
+    /// Asserting the new constraint is present is therefore what gives this test
+    /// teeth; the data assertions alone pass even when the migration no-ops.
+    #[test]
+    fn legacy_database_survives_the_pairing_method_rebuild() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(LEGACY_TOURNAMENTS_DDL).unwrap();
+        conn.execute(
+            "ALTER TABLE tournaments ADD COLUMN number_of_qualifying_rounds INTEGER NOT NULL DEFAULT 5",
+            [],
+        )
+        .unwrap();
+
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                has_consolante, advance_all, advance_count, bracket_size,
+                pairing_method, region_avoidance, created_at, updated_at,
+                number_of_qualifying_rounds
+            ) VALUES (
+                'tid', 'Old Open', 'mixed', 'club', '2026-01-01', '2026-01-02',
+                'Director', 'Umpire', 'double', 'single', 7,
+                1, 0, 16, 32,
+                'swiss', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+                9
+            )
+            "#,
+            [],
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let (name, courts, rounds, bracket_size, consolante, advance_all, advance_count, region):
+            (String, i32, i32, i32, i32, i32, i32, i32) = conn
+            .query_row(
+                r#"
+                SELECT name, number_of_courts, number_of_qualifying_rounds, bracket_size,
+                       has_consolante, advance_all, advance_count, region_avoidance
+                FROM tournaments WHERE id = 'tid'
+                "#,
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                        row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(name, "Old Open");
+        assert_eq!(courts, 7);
+        assert_eq!(rounds, 9);
+        assert_eq!(bracket_size, 32);
+        assert_eq!(consolante, 1);
+        assert_eq!(advance_all, 0);
+        assert_eq!(advance_count, 16);
+        assert_eq!(region, 1);
+
+        // The rebuild must have actually completed, not silently aborted.
+        let table_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tournaments'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            table_sql.contains("panache"),
+            "rebuild did not run; tournaments still has the old CHECK constraint"
+        );
+
+        // And nothing may be left half-built.
+        let leftover: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'tournaments_new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0, "tournaments_new was left behind");
+    }
+
+    #[test]
+    fn migrated_database_accepts_panache() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(LEGACY_TOURNAMENTS_DDL).unwrap();
+        create_tables(&conn).unwrap();
+
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            ) VALUES (
+                'p', 'Melee', 'mixed', 'club', '2026-01-01', '2026-01-02',
+                'D', 'U', 'triple', 'single', 4, 5, 0, 1, NULL, 16,
+                'panache', 0, 'now', 'now'
+            )
+            "#,
+            [],
+        )
+        .unwrap();
+
+        let method: String = conn
+            .query_row(
+                "SELECT pairing_method FROM tournaments WHERE id = 'p'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(method, "panache");
+    }
+
+    #[test]
+    fn migrations_add_the_panache_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        for (table, column) in [
+            ("teams", "is_champion"),
+            ("qualifying_rounds", "is_final"),
+            ("qualifying_games", "side1_id"),
+            ("qualifying_games", "side2_id"),
+        ] {
+            let present: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+                    rusqlite::params![table, column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(present, "{}.{} missing", table, column);
+        }
+    }
+
+    #[test]
+    fn create_tables_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        create_tables(&conn).unwrap();
+        create_tables(&conn).unwrap();
+    }
 }

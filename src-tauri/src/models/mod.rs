@@ -67,6 +67,8 @@ pub struct Team {
     pub player3: Option<String>,
     pub region: Option<String>,
     pub club: Option<String>,
+    /// Panache only: an expert the draw keeps off the same team as other champions.
+    pub is_champion: bool,
     pub created_at: String,
 }
 
@@ -80,6 +82,8 @@ pub struct CreateTeamData {
     pub player3: Option<String>,
     pub region: Option<String>,
     pub club: Option<String>,
+    /// None means "leave as-is" on update, and "not a champion" on create.
+    pub is_champion: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +93,8 @@ pub struct QualifyingRound {
     pub tournament_id: String,
     pub round_number: i32,
     pub is_complete: bool,
+    /// Panache only: the single championship game played after the qualifying rounds.
+    pub is_final: bool,
     pub created_at: String,
 }
 
@@ -103,6 +109,10 @@ pub struct QualifyingGame {
     pub team1_score: Option<i32>,
     pub team2_score: Option<i32>,
     pub is_bye: bool,
+    /// Panache only: for these games team1_id/team2_id are NULL and the two sides
+    /// are temporary teams drawn for this round.
+    pub side1_id: Option<String>,
+    pub side2_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +128,18 @@ pub struct GameWithTeams {
     pub is_bye: bool,
     pub team1: Option<Team>,
     pub team2: Option<Team>,
+    /// Panache only; null for every other format, so existing consumers are unaffected.
+    pub side1: Option<PanacheSide>,
+    pub side2: Option<PanacheSide>,
+}
+
+/// One temporary team in a panache game, with its members resolved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanacheSide {
+    pub id: String,
+    pub team_index: i32,
+    pub members: Vec<Team>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

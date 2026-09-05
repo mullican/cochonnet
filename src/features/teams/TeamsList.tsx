@@ -25,10 +25,16 @@ interface TeamsListProps {
   tournamentId: string;
 }
 
+/** Reads the panache roster's champion column, which operators fill in freehand. */
+function parseChampionFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'y', 'x'].includes(value.trim().toLowerCase());
+}
+
 export function TeamsList({ tournamentId }: TeamsListProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { teams, qualifyingRounds, currentTournament, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds } = useTournamentStore();
+  const { teams, qualifyingRounds, currentTournament, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds, setTeamChampion } = useTournamentStore();
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -48,7 +54,11 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   const hasRounds = qualifyingRounds.length > 0;
   const canDeleteAllTeams = teams.length > 0 && !hasRounds;
 
-  const showPlayer3 = currentTournament?.format === 'triple';
+  // Panache registers individuals: one name per row, no partners, plus the
+  // champion flag that drives the draw's expert-spreading constraints.
+  const isPanache = currentTournament?.pairingMethod === 'panache';
+  const showPlayer3 = !isPanache && currentTournament?.format === 'triple';
+  const showPlayer2 = !isPanache;
 
   const nextTeamNumber = teams.length > 0 ? Math.max(...teams.map((t) => t.teamNumber)) + 1 : 1;
 
@@ -63,6 +73,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
         player3: data.player3 || null,
         region: data.region || null,
         club: data.club || null,
+        isChampion: data.isChampion,
       });
       setAddDialogOpen(false);
     } catch (error) {
@@ -83,6 +94,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
         player3: data.player3 || null,
         region: data.region || null,
         club: data.club || null,
+        isChampion: data.isChampion,
       });
       setEditDialogOpen(false);
       setSelectedTeam(null);
@@ -128,17 +140,29 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           const teamsData = results.data.map((row) => ({
             tournamentId,
             teamNumber: row.number ? parseInt(row.number, 10) : undefined,
-            captain: row.captain || '',
-            player2: row.player2 || '',
-            player3: row.player3 || null,
+            // A panache roster names the column "name"; team rosters use "captain".
+            captain: (isPanache ? row.name || row.captain : row.captain) || '',
+            player2: isPanache ? '' : row.player2 || '',
+            player3: isPanache ? null : row.player3 || null,
             region: row.region || null,
             club: row.club || null,
+            isChampion: isPanache ? parseChampionFlag(row.champion) : false,
           }));
 
-          // Validate required fields
-          const invalidTeams = teamsData.filter((t) => !t.captain || !t.player2);
+          // A second player is only required by formats that actually have one.
+          // Panache and singles rosters are one name per row.
+          const requiresPartner = !isPanache && currentTournament?.format !== 'single';
+          const invalidTeams = teamsData.filter(
+            (team) => !team.captain || (requiresPartner && !team.player2)
+          );
           if (invalidTeams.length > 0) {
-            setImportError('Some teams are missing required fields (captain, player2)');
+            setImportError(
+              isPanache
+                ? t('teams.importMissingName')
+                : requiresPartner
+                  ? t('teams.importMissingFields')
+                  : t('teams.importMissingName')
+            );
             return;
           }
 
@@ -160,12 +184,16 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   };
 
   const downloadTemplate = () => {
-    const template = 'number,captain,player2,player3,region,club\n1,John Doe,Jane Smith,Bob Wilson,North,Club A\n';
+    // Panache rosters are individuals, so the template is a player list with the
+    // champion flag rather than a captain/partner pairing.
+    const template = isPanache
+      ? 'number,name,region,club,champion\n1,John Doe,North,Club A,\n2,Jane Smith,South,Club B,yes\n'
+      : 'number,captain,player2,player3,region,club\n1,John Doe,Jane Smith,Bob Wilson,North,Club A\n';
     const blob = new Blob([template], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'teams_template.csv';
+    a.download = isPanache ? 'players_template.csv' : 'teams_template.csv';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -173,7 +201,9 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-900">{t('teams.title')}</h2>
+        <h2 className="text-lg font-semibold text-gray-900">
+          {isPanache ? t('teams.playersTitle') : t('teams.title')}
+        </h2>
         <div className="flex gap-2">
           {canDeleteAllTeams && (
             <Button
@@ -202,7 +232,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
             {t('teams.importCSV')}
           </Button>
           <Button size="sm" onClick={() => { setTeamFormError(null); setAddDialogOpen(true); }}>
-            {t('teams.add')}
+            {isPanache ? t('teams.addPlayer') : t('teams.add')}
           </Button>
         </div>
       </div>
@@ -224,7 +254,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
       ) : teams.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-gray-500">{t('teams.noTeams')}</p>
+            <p className="text-gray-500">{isPanache ? t('teams.noPlayers') : t('teams.noTeams')}</p>
           </CardContent>
         </Card>
       ) : (
@@ -233,9 +263,10 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-20">{t('teams.teamNumber')}</TableHead>
-                <TableHead>{t('teams.captain')}</TableHead>
-                <TableHead>{t('teams.player2')}</TableHead>
+                <TableHead>{isPanache ? t('teams.player') : t('teams.captain')}</TableHead>
+                {showPlayer2 && <TableHead>{t('teams.player2')}</TableHead>}
                 {showPlayer3 && <TableHead>{t('teams.player3')}</TableHead>}
+                {isPanache && <TableHead className="w-28">{t('teams.champion')}</TableHead>}
                 <TableHead>{t('teams.region')}</TableHead>
                 <TableHead>{t('teams.club')}</TableHead>
                 <TableHead className="w-24">{t('common.actions')}</TableHead>
@@ -246,8 +277,25 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                 <TableRow key={team.id}>
                   <TableCell className="font-medium">{team.teamNumber}</TableCell>
                   <TableCell className="font-medium">{team.captain}</TableCell>
-                  <TableCell>{team.player2}</TableCell>
+                  {showPlayer2 && <TableCell>{team.player2}</TableCell>}
                   {showPlayer3 && <TableCell>{team.player3 || '-'}</TableCell>}
+                  {isPanache && (
+                    <TableCell>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={team.isChampion}
+                          onChange={(e) => setTeamChampion(team.id, e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        {team.isChampion && (
+                          <span className="text-xs font-medium text-amber-700">
+                            {t('teams.champion')}
+                          </span>
+                        )}
+                      </label>
+                    </TableCell>
+                  )}
                   <TableCell>{team.region || '-'}</TableCell>
                   <TableCell>{team.club || '-'}</TableCell>
                   <TableCell>
@@ -298,6 +346,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
           <TeamForm
             defaultValues={{ teamNumber: String(nextTeamNumber) }}
             showPlayer3={showPlayer3}
+            isPanache={isPanache}
             onSubmit={handleAddTeam}
             onCancel={() => {
               setAddDialogOpen(false);
@@ -327,8 +376,10 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                 player3: selectedTeam.player3 || '',
                 region: selectedTeam.region || '',
                 club: selectedTeam.club || '',
+                isChampion: selectedTeam.isChampion,
               }}
               showPlayer3={showPlayer3}
+              isPanache={isPanache}
               onSubmit={handleEditTeam}
               onCancel={() => {
                 setEditDialogOpen(false);

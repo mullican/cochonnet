@@ -22,6 +22,8 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
   const pairingMethod = currentTournament?.pairingMethod || 'swiss';
 
   // Determine which columns to show based on pairing method
+  // Panache ranks on wins then differential, so neither tiebreaker column applies.
+  const isPanache = pairingMethod === 'panache';
   const showBuchholz = pairingMethod === 'swiss';
   const showPointQuotient = pairingMethod === 'swissHotel' || pairingMethod === 'roundRobin' || pairingMethod === 'poolPlay';
   const showStatus = pairingMethod === 'poolPlay';
@@ -35,6 +37,8 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
     return formatTeamLabel(team);
   };
 
+  const getTeam = (teamId: string) => teams.find((team) => team.id === teamId);
+
   if (loading) {
     return <div className="text-center py-4 text-gray-500">{t('common.loading')}</div>;
   }
@@ -43,7 +47,7 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
     return (
       <Card>
         <div className="py-8 text-center text-gray-500">
-          No standings yet. Complete a qualifying round to see standings.
+          {t('pairing.noStandings')}
         </div>
       </Card>
     );
@@ -58,7 +62,7 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-16">{t('pairing.rank')}</TableHead>
-            <TableHead>{t('teams.captain')}</TableHead>
+            <TableHead>{isPanache ? t('teams.player') : t('teams.captain')}</TableHead>
             <TableHead className="text-center">{t('pairing.wins')}</TableHead>
             <TableHead className="text-center">{t('pairing.losses')}</TableHead>
             <TableHead className="text-center">{t('pairing.pointsFor')}</TableHead>
@@ -85,7 +89,14 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
               className={standing.isEliminated ? 'opacity-50 bg-gray-50' : ''}
             >
               <TableCell className="font-medium">{standing.rank}</TableCell>
-              <TableCell className="font-medium">{getTeamName(standing.teamId)}</TableCell>
+              <TableCell className="font-medium">
+                {getTeamName(standing.teamId)}
+                {isPanache && getTeam(standing.teamId)?.isChampion && (
+                  <span className="ml-1 text-amber-600" title={t('teams.champion')}>
+                    ★
+                  </span>
+                )}
+              </TableCell>
               <TableCell className="text-center">{standing.wins}</TableCell>
               <TableCell className="text-center">{standing.losses}</TableCell>
               <TableCell className="text-center">{standing.pointsFor}</TableCell>
