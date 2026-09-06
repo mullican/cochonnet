@@ -32,3 +32,13 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-ui-kit = "0.3"
 objc2-core-foundation = "0.3"
+
+# macOS raises the system print panel through PDFKit, which is the only way to
+# offer the operator a printer, a page range and the rest of the standard
+# options. objc2 and objc2-app-kit already arrive via tauri; pdf-kit is the one
+# addition.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSData", "NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"] }
+objc2-pdf-kit = { version = "0.3", features = ["PDFDocument", "objc2-app-kit"] }

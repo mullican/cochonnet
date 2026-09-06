@@ -52,13 +52,13 @@ export function Layout() {
                 </defs>
                 {/* Main steel boule */}
                 <circle cx="32" cy="28" r="26" fill="url(#steelGradient)" />
-                {/* Grooves: latitude circles of the sphere, so each is an
-                    ellipse arc sagging by sin(12deg) - the same geometry as
-                    icons/boule.svg, scaled to this 64px mark. */}
-                <g clipPath="url(#headerBouleClip)" fill="none" stroke="#374151" strokeWidth="1.5" strokeLinecap="round">
-                  <path d="M 7.61 19 A 24.46 5.09 0 1 0 56.39 19" />
-                  <path d="M 6.00 28 A 26.00 5.41 0 0 0 58.00 28" />
-                  <path d="M 7.61 37 A 24.46 5.09 0 0 0 56.39 37" />
+                {/* Stripes: two grooves on perpendicular planes, crossing
+                    high and right of centre. Same great-circle geometry as
+                    icons/boule.svg, scaled to this 64px mark - each is the
+                    front half of an ellipse whose minor axis is r|n.z|. */}
+                <g clipPath="url(#headerBouleClip)" fill="none" stroke="#374151" strokeWidth="2.3" strokeLinecap="round">
+                  <path d="M 13.15 45.91 A 26 3.42 136.47 0 1 50.85 10.09" />
+                  <path d="M 15.09 8.25 A 26 9.4 -130.58 0 1 48.91 47.75" />
                 </g>
                 {/* Highlight shine on boule */}
                 <ellipse cx="22" cy="18" rx="8" ry="5" fill="url(#shineGradient)" />

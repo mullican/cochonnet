@@ -163,8 +163,10 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   };
 
   /**
-   * Send the PDF straight to a printer: the default printer with no dialog on
-   * macOS, the system AirPrint sheet on iPadOS.
+   * Hand the PDF to the system print UI: the standard print panel on macOS,
+   * the AirPrint sheet on iPadOS. Both let the operator pick the printer and a
+   * page range, so this resolves once the panel is up, not once it has printed
+   * - a rejected promise means the panel never opened.
    */
   const printPdf = async (job: PdfJob) => {
     setBusy(true);

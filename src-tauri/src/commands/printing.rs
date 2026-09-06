@@ -1,19 +1,22 @@
 //! Sending a generated PDF to a printer.
 //!
-//! The two platforms are genuinely different, not just cosmetically:
+//! Every platform raises the system print UI, so the operator can choose the
+//! printer, the page range and the copy count. Reaching it differs by platform:
 //!
-//! - macOS hands the file to CUPS and it prints. There is no dialog, which is
-//!   what a scorekeeper wants when the same standings sheet goes out after
-//!   every round.
+//! - macOS goes through PDFKit: a `PDFDocument` vends an `NSPrintOperation`
+//!   that knows how to paginate the PDF, and that operation shows the standard
+//!   panel. Handing the file to `lp` instead does print, but silently and
+//!   entirely on the default printer, with no way to say "just page 3".
 //! - iPadOS has no such path. AirPrint is only reachable through
 //!   `UIPrintInteractionController`, which always shows Apple's sheet, and on
 //!   iPad that sheet is a popover that must be anchored to a rect - presenting
 //!   it the iPhone way raises an exception.
+//! - Other desktops keep the CUPS `lp` route, which is all they have here.
 
 use tauri::AppHandle;
 
 /// Writes the PDF somewhere the platform's print path can reach it.
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "macos")))]
 fn spool_to_temp(app: &AppHandle, file_name: &str, data: &[u8]) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
 
@@ -27,7 +30,7 @@ fn spool_to_temp(app: &AppHandle, file_name: &str, data: &[u8]) -> Result<std::p
     Ok(path)
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "macos")))]
 #[tauri::command]
 pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(), String> {
     use std::process::Command;
@@ -60,6 +63,65 @@ pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(),
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(), String> {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::NSPrintInfo;
+    use objc2_foundation::{NSData, NSString};
+    use objc2_pdf_kit::{PDFDocument, PDFPrintScalingMode};
+    use std::sync::mpsc;
+
+    // AppKit is main-thread only, and a Tauri command runs on a worker. The
+    // channel carries back whether the job could be set up at all, so a
+    // malformed document surfaces as an error instead of nothing happening.
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
+
+    app.run_on_main_thread(move || {
+        let Some(mtm) = MainThreadMarker::new() else {
+            let _ = tx.send(Err("Printing has to start on the main thread.".into()));
+            return;
+        };
+
+        let pdf = NSData::with_bytes(&data);
+        let Some(document) = (unsafe { PDFDocument::initWithData(PDFDocument::alloc(), &pdf) })
+        else {
+            let _ = tx.send(Err("The generated PDF could not be read back for printing.".into()));
+            return;
+        };
+
+        let operation = unsafe {
+            document.printOperationForPrintInfo_scalingMode_autoRotate(
+                Some(&NSPrintInfo::sharedPrintInfo()),
+                // Court sheets and brackets are laid out to the page already;
+                // shrinking an oversized one beats cropping it.
+                PDFPrintScalingMode::PageScaleDownToFit,
+                true,
+                mtm,
+            )
+        };
+        let Some(operation) = operation else {
+            let _ = tx.send(Err("Could not start a print job for this document.".into()));
+            return;
+        };
+
+        // Names the job in the print queue and pre-fills Save as PDF.
+        operation.setJobTitle(Some(&NSString::from_str(&file_name)));
+        operation.setShowsPrintPanel(true);
+        operation.setShowsProgressPanel(true);
+
+        // Answer before raising the panel, not after: runOperation blocks until
+        // the operator dismisses it, and the caller should not sit in a pending
+        // invoke - with its button stuck in a loading state - for that long.
+        let _ = tx.send(Ok(()));
+        operation.runOperation();
+    })
+    .map_err(|e| format!("Could not reach the UI thread: {}", e))?;
+
+    rx.recv()
+        .map_err(|_| "The print panel did not open.".to_string())?
 }
 
 #[cfg(target_os = "ios")]

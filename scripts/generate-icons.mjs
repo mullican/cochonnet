@@ -1,10 +1,12 @@
 import sharp from 'sharp';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const iconsDir = join(__dirname, '..', 'src-tauri', 'icons');
+const root = join(__dirname, '..');
+const iconsDir = join(root, 'src-tauri', 'icons');
 const svgPath = join(iconsDir, 'boule.svg');
 
 const sizes = [
@@ -49,24 +51,54 @@ const iosSizes = [
   { name: 'AppIcon-512@2x.png', size: 1024 },
 ];
 
-async function generateIcons() {
-  const svgBuffer = readFileSync(svgPath);
+// Android buckets: the legacy launcher icon, and the adaptive foreground,
+// which is drawn on a 108dp canvas of which only the middle 72dp survives
+// masking.
+const androidDensities = [
+  { dir: 'mipmap-mdpi', legacy: 48, foreground: 108 },
+  { dir: 'mipmap-hdpi', legacy: 72, foreground: 162 },
+  { dir: 'mipmap-xhdpi', legacy: 96, foreground: 216 },
+  { dir: 'mipmap-xxhdpi', legacy: 144, foreground: 324 },
+  { dir: 'mipmap-xxxhdpi', legacy: 192, foreground: 432 },
+];
 
+const svgBuffer = readFileSync(svgPath);
+
+// Rasterise at 4x the target and let sharp average it down. Going straight to
+// a 16px canvas drops the thin stripes entirely in places; supersampling keeps
+// them as a faint line, which is what the eye wants at that size. The SVG's
+// viewBox is 512 units, so 72dpi is 1:1.
+const render = (size) =>
+  sharp(svgBuffer, { density: (72 * Math.min(size * 4, 2048)) / 512 }).resize(size, size);
+
+// The logo scaled to `fraction` of a transparent square of `size`. Used where
+// a mask will eat the edges and the art has to keep clear of them.
+async function inset(size, fraction) {
+  const art = Math.round(size * fraction);
+  const offset = Math.round((size - art) / 2);
+  return sharp({ create: { width: size, height: size, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: await render(art).png().toBuffer(), left: offset, top: offset }])
+    .png()
+    .toBuffer();
+}
+
+async function generateIcons() {
   for (const { name, size } of sizes) {
-    const outputPath = join(iconsDir, name);
-    await sharp(svgBuffer)
-      .resize(size, size)
-      .png()
-      .toFile(outputPath);
+    await render(size).png().toFile(join(iconsDir, name));
     console.log(`Generated ${name} (${size}x${size})`);
   }
+
+  // The web build's favicon comes from the same vector, so the browser tab and
+  // the app icon can never drift apart.
+  copyFileSync(svgPath, join(root, 'public', 'favicon.svg'));
+  console.log('Generated public/favicon.svg');
 
   // The generated Xcode project keeps its own copy of the iOS icons in an
   // asset catalog. `tauri ios init` seeds that catalog from Tauri's default
   // template, not from this directory, so without writing both the app ships
   // the stock Tauri logo on iPad.
   const iosCatalogDir = join(
-    __dirname, '..', 'src-tauri', 'gen', 'apple',
+    root, 'src-tauri', 'gen', 'apple',
     'Assets.xcassets', 'AppIcon.appiconset'
   );
   const hasCatalog = existsSync(iosCatalogDir);
@@ -75,11 +107,7 @@ async function generateIcons() {
   // App Store Connect rejects icons with an alpha channel outright. The
   // desktop icons keep their transparency, which is correct for those.
   for (const { name, size } of iosSizes) {
-    const png = await sharp(svgBuffer)
-      .resize(size, size)
-      .flatten({ background: '#ffffff' })
-      .png()
-      .toBuffer();
+    const png = await render(size).flatten({ background: '#ffffff' }).png().toBuffer();
     writeFileSync(join(iconsDir, 'ios', name), png);
     if (hasCatalog) {
       writeFileSync(join(iosCatalogDir, name), png);
@@ -87,31 +115,110 @@ async function generateIcons() {
     console.log(`Generated ios/${name} (${size}x${size})${hasCatalog ? ' + asset catalog' : ''}`);
   }
 
-  // Generate ICO file (Windows) - use 256x256 as the main size
-  const icoSizes = [16, 32, 48, 256];
-  const icoImages = await Promise.all(
-    icoSizes.map(size =>
-      sharp(svgBuffer)
-        .resize(size, size)
-        .png()
-        .toBuffer()
-    )
-  );
-
-  // For ICO, we'll just use the 256x256 PNG as a simple solution
-  // A proper ICO would need ico-endec or similar library
-  const ico256 = await sharp(svgBuffer).resize(256, 256).png().toBuffer();
-  writeFileSync(join(iconsDir, 'icon.ico'), ico256);
-  console.log('Generated icon.ico (256x256 PNG format)');
-
-  // For ICNS (macOS), we'll use the 512x512 PNG
-  const icns512 = await sharp(svgBuffer).resize(512, 512).png().toBuffer();
-  writeFileSync(join(iconsDir, 'icon.icns'), icns512);
-  console.log('Generated icon.icns (512x512 PNG format)');
-
-  console.log('\nNote: For proper ICO and ICNS files, consider using:');
-  console.log('  - png2icons or icns-lib for macOS .icns');
-  console.log('  - png-to-ico for Windows .ico');
+  await generateAndroid();
+  await generateIco();
+  await generateIcns();
 }
 
-generateIcons().catch(console.error);
+async function generateAndroid() {
+  // The art is 400x460 in a 512 box, so its half-diagonal is 0.595 of the box.
+  // To survive a circular mask of radius size/2 the box may be at most
+  // 1/(2*0.595) = 0.84 of the icon; the adaptive foreground must additionally
+  // fit the 72/108 safe zone, hence the tighter fraction.
+  const ROUND = 0.8;
+  const ADAPTIVE = 0.58;
+
+  for (const { dir, legacy, foreground } of androidDensities) {
+    const target = join(iconsDir, 'android', dir);
+    mkdirSync(target, { recursive: true });
+
+    await render(legacy).png().toFile(join(target, 'ic_launcher.png'));
+
+    // The round icon is presented already masked, so it carries its own
+    // opaque disc rather than relying on a background layer.
+    const disc = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${legacy}" height="${legacy}">` +
+      `<circle cx="${legacy / 2}" cy="${legacy / 2}" r="${legacy / 2}" fill="#ffffff"/></svg>`
+    );
+    await sharp(disc)
+      .composite([{ input: await inset(legacy, ROUND) }])
+      .png()
+      .toFile(join(target, 'ic_launcher_round.png'));
+
+    writeFileSync(join(target, 'ic_launcher_foreground.png'), await inset(foreground, ADAPTIVE));
+    console.log(`Generated android/${dir} (${legacy}, foreground ${foreground})`);
+  }
+}
+
+// A real Windows .ico: an ICONDIR, one 16-byte ICONDIRENTRY per image, then
+// the PNG payloads. Shipping a bare PNG under the .ico extension happens to
+// work in some tools and not others.
+async function generateIco() {
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+  const images = [];
+  for (const size of icoSizes) {
+    images.push({ size, data: await render(size).png().toBuffer() });
+  }
+
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // 1 = icon
+  header.writeUInt16LE(images.length, 4);
+
+  const directory = Buffer.alloc(16 * images.length);
+  let offset = header.length + directory.length;
+  images.forEach(({ size, data }, i) => {
+    const e = i * 16;
+    directory.writeUInt8(size >= 256 ? 0 : size, e); // 0 means 256
+    directory.writeUInt8(size >= 256 ? 0 : size, e + 1);
+    directory.writeUInt8(0, e + 2); // palette size
+    directory.writeUInt8(0, e + 3); // reserved
+    directory.writeUInt16LE(1, e + 4); // colour planes
+    directory.writeUInt16LE(32, e + 6); // bits per pixel
+    directory.writeUInt32LE(data.length, e + 8);
+    directory.writeUInt32LE(offset, e + 12);
+    offset += data.length;
+  });
+
+  writeFileSync(
+    join(iconsDir, 'icon.ico'),
+    Buffer.concat([header, directory, ...images.map((i) => i.data)])
+  );
+  console.log(`Generated icon.ico (${icoSizes.join(', ')})`);
+}
+
+// A real multi-resolution .icns, via the iconutil that ships with macOS.
+// Elsewhere, leave the existing file alone rather than write a PNG in its
+// place: Tauri's bundler will re-encode a PNG, but only into a single 256px
+// entry, so Finder has nothing sharp to draw at other sizes.
+async function generateIcns() {
+  const out = join(iconsDir, 'icon.icns');
+  if (process.platform !== 'darwin') {
+    console.log('Skipped icon.icns (iconutil is macOS-only)');
+    return;
+  }
+
+  const iconset = join(iconsDir, 'icon.iconset');
+  rmSync(iconset, { recursive: true, force: true });
+  mkdirSync(iconset, { recursive: true });
+
+  const entries = [
+    ['icon_16x16.png', 16], ['icon_16x16@2x.png', 32],
+    ['icon_32x32.png', 32], ['icon_32x32@2x.png', 64],
+    ['icon_128x128.png', 128], ['icon_128x128@2x.png', 256],
+    ['icon_256x256.png', 256], ['icon_256x256@2x.png', 512],
+    ['icon_512x512.png', 512], ['icon_512x512@2x.png', 1024],
+  ];
+  for (const [name, size] of entries) {
+    await render(size).png().toFile(join(iconset, name));
+  }
+
+  execFileSync('iconutil', ['-c', 'icns', iconset, '-o', out]);
+  rmSync(iconset, { recursive: true, force: true });
+  console.log(`Generated icon.icns (${entries.length} representations)`);
+}
+
+generateIcons().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
