@@ -42,3 +42,21 @@ input[type="month"] {
   appearance: none;
   min-width: 0;
 }
+
+/*
+ * Tailwind v4 changed the default border colour from gray-200 to currentColor,
+ * so a `border-b` written without a colour draws in the text colour - a
+ * near-black hairline between table rows, around the dropdown menu and on the
+ * dialog. Restoring the v3 default fixes all of them at once, and keeps the
+ * next colourless border someone writes from coming out black too. Utilities
+ * that do name a colour still win: they land in the utilities layer, which the
+ * cascade resolves after base.
+ */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    border-color: var(--color-gray-200);
+  }
+}
