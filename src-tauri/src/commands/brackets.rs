@@ -174,8 +174,19 @@ pub fn delete_brackets(db: State<Database>, tournament_id: String) -> Result<(),
 
 #[tauri::command]
 pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // One transaction for the whole draw. Brackets are inserted before their
+    // matches, so a failure partway through used to leave bracket rows with no
+    // matches behind - visible in the UI, impossible to play, and blocking a
+    // clean retry.
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    build_brackets(&tx, &tournament_id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
     let pairing_method: String = conn
         .query_row(
             "SELECT pairing_method FROM tournaments WHERE id = ?1",
@@ -268,7 +279,7 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
         )
         .map_err(|e| e.to_string())?;
 
-        create_bracket_matches(&conn, &concours_id, &concours_teams)?;
+        create_bracket_matches(conn, &concours_id, &concours_teams)?;
 
         // Create Consolante bracket if there are enough teams
         if consolante_teams.len() >= 2 {
@@ -283,10 +294,10 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
             )
             .map_err(|e| e.to_string())?;
 
-            create_bracket_matches(&conn, &consolante_id, &consolante_teams)?;
+            create_bracket_matches(conn, &consolante_id, &consolante_teams)?;
         }
 
-        assign_bracket_courts(&conn, &tournament_id)?;
+        assign_bracket_courts(conn, tournament_id)?;
         return Ok(());
     }
 
@@ -300,6 +311,13 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
 
     let advancing_teams: Vec<&Team> = teams.iter().take(advancing_count).collect();
 
+    if advancing_teams.len() < 2 {
+        return Err(format!(
+            "Only {} team(s) would advance - a bracket needs at least 2.",
+            advancing_teams.len()
+        ));
+    }
+
     // Create brackets based on bracket size
     let bracket_names = ["A", "B", "C", "D", "E", "F", "G", "H"];
     let mut bracket_idx = 0;
@@ -308,6 +326,14 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
     while start_idx < advancing_teams.len() {
         let end_idx = std::cmp::min(start_idx + bracket_size as usize, advancing_teams.len());
         let bracket_teams: Vec<&Team> = advancing_teams[start_idx..end_idx].to_vec();
+
+        // A final chunk of one cannot be a bracket - there is nobody to play.
+        // Leave it out, the same way the consolante path already drops a
+        // remainder it cannot pair, rather than inserting a bracket row and
+        // then failing on its matches.
+        if bracket_teams.len() < 2 {
+            break;
+        }
 
         let bracket_name = if bracket_idx < bracket_names.len() {
             bracket_names[bracket_idx].to_string()
@@ -329,13 +355,13 @@ pub fn generate_brackets(db: State<Database>, tournament_id: String) -> Result<(
         .map_err(|e| e.to_string())?;
 
         // Create matches for this bracket with random pairing
-        create_bracket_matches(&conn, &bracket_id, &bracket_teams)?;
+        create_bracket_matches(conn, &bracket_id, &bracket_teams)?;
 
         start_idx = end_idx;
         bracket_idx += 1;
     }
 
-    assign_bracket_courts(&conn, &tournament_id)?;
+    assign_bracket_courts(conn, tournament_id)?;
 
     Ok(())
 }
@@ -1107,5 +1133,110 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out_of_range, 0);
+    }
+
+    /// Registers `n` ranked teams so bracket generation has a field to draw from.
+    fn add_ranked_teams(conn: &Connection, n: i32) {
+        for i in 1..=n {
+            let id = format!("team{}", i);
+            conn.execute(
+                r#"INSERT INTO teams (id, tournament_id, team_number, captain, player2, created_at)
+                   VALUES (?1, ?2, ?3, ?4, '', 'now')"#,
+                params![id, TOURNAMENT_ID, i, format!("C{}", i)],
+            )
+            .unwrap();
+            conn.execute(
+                r#"INSERT INTO team_standings (id, tournament_id, team_id, wins, losses,
+                       points_for, points_against, differential, buchholz_score,
+                       fine_buchholz_score, point_quotient, is_eliminated, rank)
+                   VALUES (?1, ?2, ?3, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?4)"#,
+                params![format!("s{}", i), TOURNAMENT_ID, id, i],
+            )
+            .unwrap();
+        }
+    }
+
+    fn configure(conn: &Connection, advance_all: bool, has_consolante: bool, bracket_size: i32) {
+        conn.execute(
+            "UPDATE tournaments SET advance_all = ?2, has_consolante = ?3, bracket_size = ?4 WHERE id = ?1",
+            params![TOURNAMENT_ID, advance_all as i32, has_consolante as i32, bracket_size],
+        )
+        .unwrap();
+    }
+
+    fn bracket_rows(conn: &Connection) -> Vec<(String, i32, i32)> {
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT b.name, b.size, (SELECT COUNT(*) FROM bracket_matches m WHERE m.bracket_id = b.id)
+                   FROM brackets b WHERE b.tournament_id = ?1 ORDER BY b.name"#,
+            )
+            .unwrap();
+        stmt.query_map(params![TOURNAMENT_ID], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
+    /// Nine advancing teams with a bracket size of eight leaves one team who
+    /// has nobody to play. That used to insert a bracket row and only then
+    /// fail on its matches, leaving an unplayable bracket behind.
+    #[test]
+    fn a_stranded_team_does_not_leave_an_empty_bracket() {
+        let conn = setup(16);
+        add_ranked_teams(&conn, 9);
+        configure(&conn, true, false, 8);
+
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+
+        let rows = bracket_rows(&conn);
+        assert_eq!(rows.len(), 1, "expected one bracket, got {:?}", rows);
+        assert_eq!(rows[0].0, "A");
+        assert!(rows[0].2 > 0, "bracket A has no matches");
+        // The 9th team is left out rather than put in a bracket of one.
+        let placed: i32 = conn
+            .query_row(
+                r#"SELECT COUNT(DISTINCT t) FROM (
+                       SELECT team1_id AS t FROM bracket_matches WHERE team1_id IS NOT NULL
+                       UNION SELECT team2_id FROM bracket_matches WHERE team2_id IS NOT NULL)"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(placed, 8, "expected 8 teams placed, got {}", placed);
+    }
+
+    /// Whatever the field size, no bracket may exist without matches.
+    #[test]
+    fn no_bracket_is_ever_left_without_matches() {
+        for n in [2, 3, 5, 8, 9, 15, 17, 33] {
+            let conn = setup(64);
+            add_ranked_teams(&conn, n);
+            configure(&conn, true, false, 8);
+
+            let result = build_brackets(&conn, TOURNAMENT_ID);
+            let rows = bracket_rows(&conn);
+
+            if result.is_err() {
+                assert!(rows.is_empty(), "{} teams: failed but left {:?}", n, rows);
+                continue;
+            }
+            for (name, size, matches) in &rows {
+                assert!(*matches > 0, "{} teams: bracket {} has no matches", n, name);
+                assert!(*size >= 2, "{} teams: bracket {} has size {}", n, name, size);
+            }
+        }
+    }
+
+    /// A field too small to fill any bracket fails cleanly instead of
+    /// silently producing nothing.
+    #[test]
+    fn a_field_too_small_for_a_bracket_is_rejected() {
+        let conn = setup(8);
+        add_ranked_teams(&conn, 1);
+        configure(&conn, true, false, 8);
+
+        let err = build_brackets(&conn, TOURNAMENT_ID).unwrap_err();
+        assert!(err.contains("at least 2"), "unhelpful error: {}", err);
+        assert!(bracket_rows(&conn).is_empty(), "left brackets behind after failing");
     }
 }

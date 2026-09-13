@@ -24,3 +24,4 @@ export {
   TableCell,
 } from './Table';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './Tabs';
+export { TeamLabel, TeamNumberChip } from './TeamLabel';

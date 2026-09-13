@@ -64,6 +64,17 @@
     <path d="M 125.89 68.11 A 200 72.3 -130.58 0 1 386.11 371.89" />
   </g>
 
+  <!-- Owner's mark, the way initials are stamped into a real boule: a bright
+       lower edge where the light catches the cut, dark stroke over it. Sits in
+       the left cell of the X, clear of both stripes and below the highlight.
+
+       Stripped for anything rendered under 128px - see MARK_MIN_PX in
+       scripts/generate-icons.mjs. Below that it stops being letters and turns
+       into a grey smudge that just makes the boule look dirty.
+
+       This is the one part of the logo that depends on a font being present
+       (Helvetica on this machine); everything else is pure geometry. -->
+
   <!-- Highlight shine on boule -->
   <ellipse cx="170" cy="120" rx="70" ry="45" fill="url(#shineGradient)" />
 

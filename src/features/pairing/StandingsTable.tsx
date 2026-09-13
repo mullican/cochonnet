@@ -9,8 +9,8 @@ import {
   TableRow,
   TableHead,
   TableCell,
+  TeamLabel,
 } from '../../components/ui';
-import { formatTeamLabel } from '../../lib/utils';
 
 interface StandingsTableProps {
   tournamentId: string;
@@ -31,11 +31,6 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
   useEffect(() => {
     fetchStandings(tournamentId);
   }, [tournamentId, fetchStandings]);
-
-  const getTeamName = (teamId: string) => {
-    const team = teams.find((t) => t.id === teamId);
-    return formatTeamLabel(team);
-  };
 
   const getTeam = (teamId: string) => teams.find((team) => team.id === teamId);
 
@@ -90,7 +85,7 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
             >
               <TableCell className="font-medium">{standing.rank}</TableCell>
               <TableCell className="font-medium">
-                {getTeamName(standing.teamId)}
+                <TeamLabel team={getTeam(standing.teamId)} />
                 {isPanache && getTeam(standing.teamId)?.isChampion && (
                   <span className="ml-1 text-amber-600" title={t('teams.champion')}>
                     ★

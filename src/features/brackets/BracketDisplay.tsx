@@ -11,9 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  TeamLabel,
 } from '../../components/ui';
 import type { BracketMatch } from '../../types';
-import { formatTeamLabel } from '../../lib/utils';
 
 interface BracketDisplayProps {
   bracketId: string;
@@ -45,7 +45,12 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     fetchMatchesForBracket(bracketId);
   }, [bracketId, fetchMatchesForBracket]);
 
+  // A bracket of fewer than two entrants has no matches to lay out; log2 then
+  // gives 0 (or -Infinity) rounds and the view renders an empty frame with no
+  // explanation. Newly generated draws cannot be this shape, but an older
+  // tournament may still hold one.
   const numRounds = Math.log2(bracketSize);
+  const isDrawable = bracketSize >= 2 && Number.isInteger(numRounds);
 
   const getMatchesByRound = (roundNumber: number) => {
     return bracketMatches
@@ -67,11 +72,8 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     }
   };
 
-  const getTeamName = (teamId: string | null | undefined) => {
-    if (!teamId) return 'TBD';
-    const team = teams.find((t) => t.id === teamId);
-    return formatTeamLabel(team);
-  };
+  const getTeam = (teamId: string | null | undefined) =>
+    teamId ? teams.find((t) => t.id === teamId) : undefined;
 
   // Check if a match can be edited (has both teams, and next round match hasn't been scored)
   const canEditMatch = (match: BracketMatch) => {
@@ -139,6 +141,12 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     return <div className="text-center py-4 text-gray-500">{t('common.loading')}</div>;
   }
 
+  if (!isDrawable) {
+    return (
+      <div className="py-8 text-center text-gray-500">{t('brackets.notDrawable')}</div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto" ref={containerRef}>
       <div className="flex min-w-max py-4">
@@ -189,7 +197,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                             }`}
                           >
                             <span className="truncate text-sm">
-                              {match.isBye && !match.team1Id ? 'BYE' : getTeamName(match.team1Id)}
+                              {match.isBye && !match.team1Id ? 'BYE' : <TeamLabel team={getTeam(match.team1Id)} />}
                             </span>
                             <span className="text-sm ml-2">
                               {match.team1Score !== null ? match.team1Score : '-'}
@@ -205,7 +213,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                             }`}
                           >
                             <span className="truncate text-sm">
-                              {match.isBye ? 'BYE' : getTeamName(match.team2Id)}
+                              {match.isBye ? 'BYE' : <TeamLabel team={getTeam(match.team2Id)} />}
                             </span>
                             <span className="text-sm ml-2">
                               {match.isBye ? '7' : match.team2Score !== null ? match.team2Score : '-'}
@@ -309,7 +317,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                   <Card className="w-48 bg-green-50 border-green-200">
                     <CardContent className="p-3 text-center">
                       <div className="text-lg font-bold text-green-700">
-                        {getTeamName(finalMatch.winnerId)}
+                        <TeamLabel team={getTeam(finalMatch.winnerId)} />
                       </div>
                     </CardContent>
                   </Card>
@@ -335,7 +343,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
               <div className="flex items-center gap-4">
                 <div className="flex-1">
                   <label className="text-sm font-medium text-gray-700">
-                    {getTeamName(selectedMatch.team1Id)}
+                    <TeamLabel team={getTeam(selectedMatch.team1Id)} />
                   </label>
                   <Input
                     type="number"
@@ -349,7 +357,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                 <span className="text-gray-400 pt-6">{t('pairing.vs')}</span>
                 <div className="flex-1">
                   <label className="text-sm font-medium text-gray-700">
-                    {getTeamName(selectedMatch.team2Id)}
+                    <TeamLabel team={getTeam(selectedMatch.team2Id)} />
                   </label>
                   <Input
                     type="number"

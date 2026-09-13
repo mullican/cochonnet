@@ -87,6 +87,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     pointQuotient: t('pdf.pointQuotient'),
     player: t('pdf.player'),
     sittingOut: t('pdf.sittingOut'),
+    nothingToShow: t('pdf.nothingToShow'),
   }), [t]);
 
   // Helper to write file, removing existing file first if needed

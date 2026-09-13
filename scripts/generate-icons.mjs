@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { execFileSync } from 'child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -62,14 +62,31 @@ const androidDensities = [
   { dir: 'mipmap-xxxhdpi', legacy: 192, foreground: 432 },
 ];
 
-const svgBuffer = readFileSync(svgPath);
+const svgSource = readFileSync(svgPath, 'utf8');
+
+// Below this, the LDM mark stops resolving as letters and reads as a smudge on
+// the boule. Checked by rendering: legible at 128, soft at 120, gone by 96.
+const MARK_MIN_PX = 128;
+
+// Two masters from one file, so the mark is defined in exactly one place.
+const withMark = Buffer.from(svgSource);
+const withoutMark = Buffer.from(svgSource.replace(/\n?\s*<g id="maker-mark"[\s\S]*?<\/g>\n/, '\n'));
+if (withoutMark.length >= withMark.length) {
+  throw new Error('Could not strip #maker-mark from boule.svg - check the group markup');
+}
 
 // Rasterise at 4x the target and let sharp average it down. Going straight to
 // a 16px canvas drops the thin stripes entirely in places; supersampling keeps
 // them as a faint line, which is what the eye wants at that size. The SVG's
 // viewBox is 512 units, so 72dpi is 1:1.
+//
+// `size` is the size the ARTWORK is drawn at, not the canvas: the adaptive
+// Android foreground insets the boule to 58% of a 216px canvas, which puts it
+// well under the threshold even though the file is large.
 const render = (size) =>
-  sharp(svgBuffer, { density: (72 * Math.min(size * 4, 2048)) / 512 }).resize(size, size);
+  sharp(size >= MARK_MIN_PX ? withMark : withoutMark, {
+    density: (72 * Math.min(size * 4, 2048)) / 512,
+  }).resize(size, size);
 
 // The logo scaled to `fraction` of a transparent square of `size`. Used where
 // a mask will eat the edges and the art has to keep clear of them.
@@ -89,9 +106,10 @@ async function generateIcons() {
   }
 
   // The web build's favicon comes from the same vector, so the browser tab and
-  // the app icon can never drift apart.
-  copyFileSync(svgPath, join(root, 'public', 'favicon.svg'));
-  console.log('Generated public/favicon.svg');
+  // the app icon can never drift apart. It goes out without the mark: a favicon
+  // is drawn at 16-32px, where the mark is a smudge and nothing more.
+  writeFileSync(join(root, 'public', 'favicon.svg'), withoutMark);
+  console.log('Generated public/favicon.svg (mark stripped)');
 
   // The generated Xcode project keeps its own copy of the iOS icons in an
   // asset catalog. `tauri ios init` seeds that catalog from Tauri's default

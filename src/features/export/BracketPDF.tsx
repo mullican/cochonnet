@@ -1,6 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
-import { formatTeamLabel } from '../../lib/utils';
+import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
 
 // Compact dimensions for fitting a bracket on one page
@@ -153,11 +153,8 @@ interface BracketPDFProps {
 }
 
 export function BracketPDF({ tournament, teams, brackets, matches, translations: t }: BracketPDFProps) {
-  const getTeamName = (teamId: string | null | undefined) => {
-    if (!teamId) return t.tbd;
-    const team = teams.find((tm) => tm.id === teamId);
-    return formatTeamLabel(team);
-  };
+  const getTeam = (teamId: string | null | undefined) =>
+    teamId ? teams.find((tm) => tm.id === teamId) : undefined;
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
@@ -199,9 +196,14 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
             match.winnerId === match.team1Id ? styles.winner : {},
           ]}
         >
-          <Text style={[styles.teamName, !match.team1Id ? styles.tbd : {}]}>
-            {getTeamName(match.team1Id)}
-          </Text>
+          <TeamLabelPDF
+            team={getTeam(match.team1Id)}
+            fontSize={6}
+            compact
+            fallback={t.tbd}
+            style={styles.teamName}
+            nameStyle={!match.team1Id ? styles.tbd : {}}
+          />
           <Text style={styles.score}>
             {match.team1Score !== null ? match.team1Score : ''}
           </Text>
@@ -214,15 +216,14 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
             match.isBye ? styles.bye : {},
           ]}
         >
-          <Text
-            style={[
-              styles.teamName,
-              !match.team2Id ? styles.tbd : {},
-              match.isBye ? styles.bye : {},
-            ]}
-          >
-            {match.isBye ? t.bye : getTeamName(match.team2Id)}
-          </Text>
+          <TeamLabelPDF
+            team={match.isBye ? undefined : getTeam(match.team2Id)}
+            fontSize={6}
+            compact
+            fallback={match.isBye ? t.bye : t.tbd}
+            style={styles.teamName}
+            nameStyle={[!match.team2Id ? styles.tbd : {}, match.isBye ? styles.bye : {}]}
+          />
           <Text style={styles.score}>
             {match.isBye ? '' : match.team2Score !== null ? match.team2Score : ''}
           </Text>
@@ -231,9 +232,30 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
     </View>
   );
 
+  // A bracket needs at least two entrants to have a single match, and a
+  // Document with no Page at all produces a zero-page PDF - a file that some
+  // viewers refuse to open and that a printer has nothing to do with. Both
+  // are unreachable from a freshly generated draw, but an older tournament can
+  // still hold a degenerate bracket, and printing sends these bytes at a
+  // printer unattended.
+  const drawable = brackets.filter((b) => b.size >= 2 && Number.isInteger(Math.log2(b.size)));
+
+  if (drawable.length === 0) {
+    return (
+      <Document>
+        <Page size="A4" orientation="landscape" style={styles.page}>
+          <View style={styles.header}>
+            <Text style={styles.title}>{tournament.name}</Text>
+            <Text style={styles.subtitle}>{t.nothingToShow}</Text>
+          </View>
+        </Page>
+      </Document>
+    );
+  }
+
   return (
     <Document>
-      {brackets.map((bracket) => {
+      {drawable.map((bracket) => {
         const bracketMatches = getMatchesForBracket(bracket.id);
         const numRounds = Math.log2(bracket.size);
         const firstRoundMatchCount = bracket.size / 2;

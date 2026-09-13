@@ -122,6 +122,16 @@ export function CourtAssignmentsPDF({
 
   return (
     <Document>
+      {sortedRounds.length === 0 && (
+        // No rounds means no pages, and a zero-page PDF is a file some viewers
+        // will not open and a printer cannot take.
+        <Page size="A4" style={styles.page}>
+          <View style={styles.header}>
+            <Text style={styles.tournamentName}>{tournament.name}</Text>
+            <Text style={styles.subtitle}>{t.nothingToShow}</Text>
+          </View>
+        </Page>
+      )}
       {sortedRounds.map((round) => {
         const roundGames = games
           .filter((g) => g.roundId === round.id)

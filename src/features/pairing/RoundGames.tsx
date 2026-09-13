@@ -6,8 +6,8 @@ import {
   Card,
   CardContent,
   Input,
+  TeamLabel,
 } from '../../components/ui';
-import { formatTeamLabel } from '../../lib/utils';
 import type { GameWithTeams, PanacheSide, Team } from '../../types';
 
 interface RoundGamesProps {
@@ -75,11 +75,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     });
   }, [qualifyingGames]);
 
-  const getTeamName = (teamId: string | null | undefined) => {
-    if (!teamId) return 'TBD';
-    const team = teams.find((t) => t.id === teamId);
-    return formatTeamLabel(team);
-  };
+  const getTeam = (teamId: string | null | undefined) =>
+    teamId ? teams.find((t) => t.id === teamId) : undefined;
 
   /**
    * The registered entrants on one side of a game: a single team for the team
@@ -145,12 +142,17 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     side: PanacheSide | null | undefined;
     teamId: string | null | undefined;
   }) => {
-    if (!side) return <div className="font-medium truncate">{getTeamName(teamId)}</div>;
+    if (!side)
+      return (
+        <div className="font-medium">
+          <TeamLabel team={getTeam(teamId)} className="max-w-full" />
+        </div>
+      );
     return (
       <div className="font-medium leading-tight">
         {side.members.map((member) => (
           <div key={member.id} className="truncate">
-            {formatTeamLabel(member)}
+            <TeamLabel team={member} className="max-w-full" />
             {member.isChampion && <span className="ml-1 text-amber-600">★</span>}
           </div>
         ))}
@@ -223,8 +225,10 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       {qualifyingSitouts.length > 0 && (
         <div className="rounded-md bg-gray-50 px-4 py-3 text-sm">
           <span className="font-medium text-gray-700">{t('pairing.sittingOut')}: </span>
-          <span className="text-gray-600">
-            {qualifyingSitouts.map((p) => formatTeamLabel(p)).join(', ')}
+          <span className="inline-flex flex-wrap items-baseline gap-x-3 gap-y-1 text-gray-600">
+            {qualifyingSitouts.map((p) => (
+              <TeamLabel key={p.id} team={p} />
+            ))}
           </span>
         </div>
       )}
@@ -263,7 +267,9 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
 
                 {game.isBye ? (
                   <div className="text-center">
-                    <div className="font-medium">{getTeamName(game.team1Id)}</div>
+                    <div className="font-medium">
+                      <TeamLabel team={getTeam(game.team1Id)} />
+                    </div>
                     <div className="text-sm text-gray-500 mt-2">{t('pairing.bye')}</div>
                     <div className="text-sm text-green-600 mt-1">13 - 7</div>
                   </div>

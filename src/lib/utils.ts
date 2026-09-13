@@ -5,7 +5,13 @@
 export function formatTeamName(captainName: string | null | undefined): string {
   if (!captainName) return 'TBD';
 
-  const parts = captainName.trim().split(/\s+/);
+  // A name of only spaces is not a name. Splitting it yields one empty part,
+  // which used to render as a blank cell - a nameless row on the standings
+  // sheet - rather than the TBD an empty name gets.
+  const trimmed = captainName.trim();
+  if (!trimmed) return 'TBD';
+
+  const parts = trimmed.split(/\s+/);
   if (parts.length === 0) return 'TBD';
 
   if (parts.length === 1) {

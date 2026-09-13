@@ -1,6 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, TeamStanding } from '../../types';
-import { formatTeamLabel } from '../../lib/utils';
+import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
 
 const styles = StyleSheet.create({
@@ -40,15 +40,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 3,
   },
-  topRow: {
-    backgroundColor: '#f0f8ff',
-  },
   rankCol: {
     width: '8%',
     textAlign: 'center',
   },
   teamCol: {
-    width: '21%',
+    // 27, not 21: the chip needs its own room, and the row had 8% spare even in
+    // the widest case (swiss, which shows both Buchholz columns). Taking it here
+    // keeps names like MARTIN-LACROIX M. on one line.
+    width: '27%',
   },
   statCol: {
     width: '9%',
@@ -73,10 +73,7 @@ interface StandingsPDFProps {
 }
 
 export function StandingsPDF({ tournament, teams, standings, translations: t }: StandingsPDFProps) {
-  const getTeamName = (teamId: string) => {
-    const team = teams.find((t) => t.id === teamId);
-    return formatTeamLabel(team);
-  };
+  const getTeam = (teamId: string) => teams.find((team) => team.id === teamId);
 
   // Mirror the on-screen column matrix in StandingsTable: only show the tiebreaker
   // columns the tournament's format actually ranks on.
@@ -136,47 +133,42 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
             <Text style={[styles.statCol, styles.bold]}>{t.differential}</Text>
           </View>
 
-          {sortedStandings.map((standing, index) => {
-            const isTopTeam = index < topTeamCount;
-
-            return (
-              <View
-                key={standing.id}
-                style={[styles.tableRow, isTopTeam ? styles.topRow : {}]}
-              >
-                <Text style={[styles.rankCol, styles.bold]}>{standing.rank}</Text>
-                <Text style={styles.teamCol}>{getTeamName(standing.teamId)}</Text>
-                <Text style={styles.statCol}>{standing.wins}</Text>
-                <Text style={styles.statCol}>{standing.losses}</Text>
-                <Text style={styles.statCol}>{standing.pointsFor}</Text>
-                <Text style={styles.statCol}>{standing.pointsAgainst}</Text>
-                {showBuchholz && (
-                  <>
-                    <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
-                    <Text style={styles.statCol}>{standing.fineBuchholzScore.toFixed(1)}</Text>
-                  </>
-                )}
-                {showPointQuotient && (
-                  <Text style={styles.statCol}>
-                    {standing.pointQuotient > 100 ? '∞' : standing.pointQuotient.toFixed(2)}
-                  </Text>
-                )}
-                <Text
-                  style={[
-                    styles.statCol,
-                    standing.differential > 0
-                      ? styles.positive
-                      : standing.differential < 0
-                      ? styles.negative
-                      : {},
-                  ]}
-                >
-                  {standing.differential > 0 ? '+' : ''}
-                  {standing.differential}
-                </Text>
+          {sortedStandings.map((standing) => (
+            <View key={standing.id} style={styles.tableRow}>
+              <Text style={[styles.rankCol, styles.bold]}>{standing.rank}</Text>
+              <View style={styles.teamCol}>
+                <TeamLabelPDF team={getTeam(standing.teamId)} fontSize={10} fallback="TBD" />
               </View>
-            );
-          })}
+              <Text style={styles.statCol}>{standing.wins}</Text>
+              <Text style={styles.statCol}>{standing.losses}</Text>
+              <Text style={styles.statCol}>{standing.pointsFor}</Text>
+              <Text style={styles.statCol}>{standing.pointsAgainst}</Text>
+              {showBuchholz && (
+                <>
+                  <Text style={styles.statCol}>{standing.buchholzScore.toFixed(1)}</Text>
+                  <Text style={styles.statCol}>{standing.fineBuchholzScore.toFixed(1)}</Text>
+                </>
+              )}
+              {showPointQuotient && (
+                <Text style={styles.statCol}>
+                  {standing.pointQuotient > 100 ? '∞' : standing.pointQuotient.toFixed(2)}
+                </Text>
+              )}
+              <Text
+                style={[
+                  styles.statCol,
+                  standing.differential > 0
+                    ? styles.positive
+                    : standing.differential < 0
+                    ? styles.negative
+                    : {},
+                ]}
+              >
+                {standing.differential > 0 ? '+' : ''}
+                {standing.differential}
+              </Text>
+            </View>
+          ))}
         </View>
 
         <View style={{ marginTop: 20 }}>

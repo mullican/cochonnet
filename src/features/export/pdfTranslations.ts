@@ -41,4 +41,6 @@ export interface PDFTranslations {
   pointQuotient: string;
   player: string;
   sittingOut: string;
+  /** Shown in place of a page when a document has nothing to render. */
+  nothingToShow: string;
 }

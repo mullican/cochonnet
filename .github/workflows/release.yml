@@ -13,6 +13,13 @@ jobs:
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
+      # Starts as a draft on purpose. The three platform builds take upwards of
+      # fifteen minutes and upload their installers as they finish, so a release
+      # that is live from the start is a visible, empty release for most of that
+      # window - and a permanently incomplete one if a build fails. The
+      # publish-release job at the end flips it to public once every installer
+      # is attached, which is what makes a tag push produce a real release with
+      # nothing left to click.
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v3
@@ -97,6 +104,27 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Cochonnet ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install Cochonnet.'
+          # Kept a draft here too; publish-release opens it once all three
+          # platforms have uploaded.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # `needs: build` covers every leg of the matrix, so this runs only when
+      # macOS x86_64, macOS aarch64 and Windows have all succeeded. If any one
+      # fails the release stays a draft, holding a half-built version back
+      # rather than publishing it.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --latest

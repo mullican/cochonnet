@@ -172,7 +172,8 @@
     "quarterFinal": "Quart de Finale",
     "round": "Tour {{number}}",
     "enterScore": "Entrer le Score",
-    "noBrackets": "Pas de tableaux générés. Terminez d'abord les tours de qualification."
+    "noBrackets": "Pas de tableaux générés. Terminez d'abord les tours de qualification.",
+    "notDrawable": "Ce tableau a trop peu d'équipes pour être dessiné."
   },
   "export": {
     "title": "Exporter",
@@ -230,7 +231,8 @@
     "buchholz": "Buch",
     "fineBuchholz": "FBuch",
     "pointQuotient": "QP",
-    "tiebreakerPanache": "Départage : victoires, puis différence de points."
+    "tiebreakerPanache": "Départage : victoires, puis différence de points.",
+    "nothingToShow": "Rien à afficher pour l'instant."
   },
   "validation": {
     "required": "Ce champ est obligatoire",

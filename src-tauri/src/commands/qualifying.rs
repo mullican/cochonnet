@@ -237,11 +237,30 @@ pub fn generate_all_qualifying_rounds(
         .map_err(|e| e.to_string())?;
 
     // Pool Play is fixed at 3 rounds max
-    let max_rounds = if pairing_method == "poolPlay" {
+    let mut max_rounds = if pairing_method == "poolPlay" {
         3
     } else {
         number_of_qualifying_rounds
     };
+
+    // A round robin is finished once everyone has met everyone: that is
+    // n - 1 rounds for an even field, n for an odd one (the extra round is
+    // where the last team takes its bye). Asking for more can only repeat
+    // pairings, so cap it and report how many rounds actually exist.
+    if pairing_method == "roundRobin" {
+        let team_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+                params![tournament_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if team_count >= 2 {
+            let full_cycle = if team_count % 2 == 0 { team_count - 1 } else { team_count };
+            max_rounds = max_rounds.min(full_cycle);
+        }
+    }
 
     // Generate all remaining rounds
     let mut rounds = Vec::new();
@@ -351,6 +370,25 @@ fn generate_single_round(
         .flat_map(|(t1, t2)| vec![(t1.clone(), t2.clone()), (t2, t1)])
         .collect();
 
+    // Which teams have already sat out a round. A bye is scored as a win, so
+    // it has to rotate; without this the same team can draw several.
+    let mut bye_stmt = conn
+        .prepare(
+            r#"
+            SELECT g.team1_id
+            FROM qualifying_games g
+            JOIN qualifying_rounds r ON g.round_id = r.id
+            WHERE r.tournament_id = ?1 AND g.is_bye = 1 AND g.team1_id IS NOT NULL
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let bye_history: HashSet<String> = bye_stmt
+        .query_map(params![tournament_id], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
     // Get standings for Swiss pairing
     let tournament_id_owned = tournament_id.to_string();
     let mut standings_stmt = conn
@@ -389,10 +427,10 @@ fn generate_single_round(
 
     // Generate pairings based on method
     let pairings = match pairing_method.as_str() {
-        "swiss" => generate_swiss_pairings(&teams, &standings, &pairing_history, region_avoidance)?,
-        "swissHotel" => generate_swiss_hotel_pairings(&teams, &pairing_history, region_avoidance, new_round_number)?,
+        "swiss" => generate_swiss_pairings(&teams, &standings, &pairing_history, &bye_history, region_avoidance)?,
+        "swissHotel" => generate_swiss_hotel_pairings(&teams, &pairing_history, &bye_history, region_avoidance, new_round_number)?,
         "roundRobin" => generate_round_robin_pairings(&teams, new_round_number)?,
-        "poolPlay" => generate_pool_play_round(&teams, &standings, &pairing_history, region_avoidance, new_round_number)?,
+        "poolPlay" => generate_pool_play_round(&teams, &standings, &pairing_history, &bye_history, region_avoidance, new_round_number)?,
         "panache" => {
             return Err(
                 "Panaché rounds are drawn by the Panaché scheduler, not round-by-round pairing."
@@ -479,10 +517,158 @@ fn generate_single_round(
     })
 }
 
+/// Finds a pairing of `order` in which no pair is `forbidden`, preferring
+/// opponents that appear early in `order`.
+///
+/// The callers used to take the first feasible opponent for each team in turn
+/// and commit to it. That is fast but incomplete: a greedy choice can consume
+/// the only legal partner some later team had, forcing a repeat matchup even
+/// when a repeat-free pairing existed. With four level teams who have only
+/// ever played C vs D, greedy pairs A-B and then has nothing left for C but D,
+/// while A-C plus B-D would have been clean.
+///
+/// So this searches instead of guessing: depth-first over the first unpaired
+/// team's candidates, in `order`, backtracking when a branch strands someone.
+/// Taking candidates in order means the first complete pairing found is also
+/// the one that keeps teams closest to their own score group, which is what
+/// Swiss wants.
+///
+/// `steps` bounds the work. Real fields settle in well under the budget; a
+/// pathological one gives up and lets the caller fall back rather than hang
+/// the app mid-tournament.
+fn find_pairing_avoiding<F>(
+    order: &[&Team],
+    forbidden: F,
+    budget: u32,
+) -> Option<Vec<(String, String)>>
+where
+    F: Fn(&Team, &Team) -> bool,
+{
+    // An odd field cannot pair everyone; the caller draws a bye first and
+    // passes the rest, so anything odd here is a caller bug, not a draw.
+    if order.len() % 2 != 0 {
+        return None;
+    }
+
+    let n = order.len();
+    let mut taken = vec![false; n];
+    let mut acc: Vec<(String, String)> = Vec::with_capacity(n / 2);
+    let mut steps: u32 = 0;
+
+    fn search<F>(
+        order: &[&Team],
+        taken: &mut Vec<bool>,
+        acc: &mut Vec<(String, String)>,
+        steps: &mut u32,
+        budget: u32,
+        forbidden: &F,
+    ) -> bool
+    where
+        F: Fn(&Team, &Team) -> bool,
+    {
+        let Some(i) = (0..order.len()).find(|&i| !taken[i]) else {
+            return true; // everyone is paired
+        };
+
+        for j in (i + 1)..order.len() {
+            if taken[j] || forbidden(order[i], order[j]) {
+                continue;
+            }
+
+            *steps += 1;
+            if *steps > budget {
+                return false;
+            }
+
+            taken[i] = true;
+            taken[j] = true;
+            acc.push((order[i].id.clone(), order[j].id.clone()));
+
+            if search(order, taken, acc, steps, budget, forbidden) {
+                return true;
+            }
+
+            acc.pop();
+            taken[i] = false;
+            taken[j] = false;
+        }
+
+        false
+    }
+
+    if search(order, &mut taken, &mut acc, &mut steps, budget, &forbidden) {
+        Some(acc)
+    } else {
+        None
+    }
+}
+
+/// How many steps `find_pairing_avoiding` may take before giving up.
+const PAIRING_BUDGET: u32 = 50_000;
+
+/// Pairs `order` under the graduated constraints every format here shares:
+/// avoid rematches and (optionally) same-region meetings, relaxing region
+/// first and rematches only as a last resort. Each pass is a complete search,
+/// so a constraint is only relaxed when no pairing satisfying it exists.
+fn pair_with_graduated_constraints(
+    order: &[&Team],
+    pairing_history: &HashSet<(String, String)>,
+    region_avoidance: bool,
+) -> Vec<(String, Option<String>)> {
+    let played = |a: &Team, b: &Team| pairing_history.contains(&(a.id.clone(), b.id.clone()));
+    let same_region = |a: &Team, b: &Team| match (&a.region, &b.region) {
+        (Some(r1), Some(r2)) => !r1.is_empty() && !r2.is_empty() && r1 == r2,
+        _ => false,
+    };
+
+    let found = if region_avoidance {
+        find_pairing_avoiding(order, |a, b| played(a, b) || same_region(a, b), PAIRING_BUDGET)
+            .or_else(|| find_pairing_avoiding(order, |a, b| played(a, b), PAIRING_BUDGET))
+    } else {
+        find_pairing_avoiding(order, |a, b| played(a, b), PAIRING_BUDGET)
+    };
+
+    // Last resort: a repeat is unavoidable (or the search ran out of budget),
+    // so pair in order and accept it.
+    let pairs = found.unwrap_or_else(|| {
+        let mut taken = vec![false; order.len()];
+        let mut out = Vec::new();
+        for i in 0..order.len() {
+            if taken[i] {
+                continue;
+            }
+            if let Some(j) = ((i + 1)..order.len()).find(|&j| !taken[j]) {
+                taken[i] = true;
+                taken[j] = true;
+                out.push((order[i].id.clone(), order[j].id.clone()));
+            }
+        }
+        out
+    });
+
+    pairs.into_iter().map(|(a, b)| (a, Some(b))).collect()
+}
+
+/// Picks the team to sit out an odd round: the lowest placed who has not had
+/// one yet, so byes rotate instead of landing on the same team every round.
+///
+/// Without this the bye fell to whoever the pairing loop happened to leave
+/// over, which in a 7-team field was the same team three rounds running - and
+/// a bye is scored as a 13-7 win, so that was three free wins.
+fn select_bye_team<'a>(order: &[&'a Team], bye_history: &HashSet<String>) -> Option<&'a Team> {
+    order
+        .iter()
+        .rev()
+        .find(|t| !bye_history.contains(&t.id))
+        .or_else(|| order.last())
+        .copied()
+}
+
 fn generate_swiss_pairings(
     teams: &[Team],
     standings: &HashMap<String, TeamStanding>,
     pairing_history: &HashSet<(String, String)>,
+    bye_history: &HashSet<String>,
     region_avoidance: bool,
 ) -> Result<Vec<(String, Option<String>)>, String> {
     let mut rng = thread_rng();
@@ -505,93 +691,22 @@ fn generate_swiss_pairings(
     });
 
     let mut pairings: Vec<(String, Option<String>)> = Vec::new();
-    let mut paired: HashSet<String> = HashSet::new();
 
-    // If odd number of teams, handle BYE
-    let needs_bye = sorted_teams.len() % 2 == 1;
-
-    // Helper to check if two teams are from the same region
-    let same_region = |t1: &Team, t2: &Team| -> bool {
-        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
-            !r1.is_empty() && !r2.is_empty() && r1 == r2
-        } else {
-            false
-        }
-    };
-
-    // Try to pair teams from similar score groups
-    for i in 0..sorted_teams.len() {
-        let team = sorted_teams[i];
-        if paired.contains(&team.id) {
-            continue;
-        }
-
-        // Find best opponent with graduated fallback:
-        // Pass 1: Respect both pairing history AND region avoidance
-        // Pass 2: Respect pairing history only (relax region avoidance)
-        // Pass 3: Any unpaired opponent (relax all constraints)
-        let mut best_opponent: Option<&Team> = None;
-
-        // Pass 1: Full constraints (no repeat matchups, avoid same region)
-        if region_avoidance {
-            for j in (i + 1)..sorted_teams.len() {
-                let opponent = sorted_teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                if same_region(team, opponent) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 2: Relax region avoidance, but still avoid repeat matchups
-        if best_opponent.is_none() {
-            for j in (i + 1)..sorted_teams.len() {
-                let opponent = sorted_teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 3: Relax all constraints - just find any unpaired opponent
-        if best_opponent.is_none() {
-            for j in (i + 1)..sorted_teams.len() {
-                let opponent = sorted_teams[j];
-                if !paired.contains(&opponent.id) {
-                    best_opponent = Some(opponent);
-                    break;
-                }
-            }
-        }
-
-        if let Some(opponent) = best_opponent {
-            pairings.push((team.id.clone(), Some(opponent.id.clone())));
-            paired.insert(team.id.clone());
-            paired.insert(opponent.id.clone());
+    // Draw the bye first so the rest is an even field to pair. Picking it up
+    // front also means the bye follows the rotation rule rather than falling
+    // to whichever team the pairing happened to strand.
+    if sorted_teams.len() % 2 == 1 {
+        if let Some(bye_team) = select_bye_team(&sorted_teams, bye_history) {
+            pairings.push((bye_team.id.clone(), None));
+            sorted_teams.retain(|t| t.id != bye_team.id);
         }
     }
 
-    // Handle BYE
-    if needs_bye {
-        for team in &sorted_teams {
-            if !paired.contains(&team.id) {
-                pairings.push((team.id.clone(), None));
-                break;
-            }
-        }
-    }
+    pairings.extend(pair_with_graduated_constraints(
+        &sorted_teams,
+        pairing_history,
+        region_avoidance,
+    ));
 
     // Shuffle pairings to randomize court assignment
     pairings.shuffle(&mut rng);
@@ -618,15 +733,20 @@ fn generate_round_robin_pairings(
     }
 
     let total = team_ids.len();
+    // The circle method fixes one team and rotates the rest by one seat per
+    // round, so after total - 1 rounds everyone has met everyone exactly once.
+    //
+    // The offset here is the round index itself. It used to be
+    // `round_index * (total - 1)`, which is always a multiple of the modulus
+    // and so always rotated by zero - every round produced the identical set
+    // of games.
     let round_index = ((round_number - 1) as usize) % (total - 1);
 
     // Rotate teams (keep first fixed for circle method)
     let mut rotated = vec![team_ids[0].clone()];
     for i in 1..total {
-        let idx = 1 + (i - 1 + round_index * (total - 1)) % (total - 1);
-        if idx < total {
-            rotated.push(team_ids[idx].clone());
-        }
+        let idx = 1 + (i - 1 + round_index) % (total - 1);
+        rotated.push(team_ids[idx].clone());
     }
 
     // Generate pairings
@@ -654,6 +774,7 @@ fn generate_round_robin_pairings(
 fn generate_swiss_hotel_pairings(
     teams: &[Team],
     pairing_history: &HashSet<(String, String)>,
+    bye_history: &HashSet<String>,
     region_avoidance: bool,
     _round_number: i32,
 ) -> Result<Vec<(String, Option<String>)>, String> {
@@ -664,100 +785,30 @@ fn generate_swiss_hotel_pairings(
     shuffled_teams.shuffle(&mut rng);
 
     let mut pairings: Vec<(String, Option<String>)> = Vec::new();
-    let mut paired: HashSet<String> = HashSet::new();
 
-    let needs_bye = shuffled_teams.len() % 2 == 1;
-
-    // Helper to check if two teams are from the same region
-    let same_region = |t1: &Team, t2: &Team| -> bool {
-        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
-            !r1.is_empty() && !r2.is_empty() && r1 == r2
-        } else {
-            false
-        }
-    };
-
-    // Try to pair teams with graduated fallback
-    for i in 0..shuffled_teams.len() {
-        let team = shuffled_teams[i];
-        if paired.contains(&team.id) {
-            continue;
-        }
-
-        let mut best_opponent: Option<&Team> = None;
-
-        // Pass 1: Full constraints (no repeat matchups, avoid same region)
-        if region_avoidance {
-            for j in (i + 1)..shuffled_teams.len() {
-                let opponent = shuffled_teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                if same_region(team, opponent) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 2: Relax region avoidance, but still avoid repeat matchups
-        if best_opponent.is_none() {
-            for j in (i + 1)..shuffled_teams.len() {
-                let opponent = shuffled_teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 3: Relax all constraints - just find any unpaired opponent
-        if best_opponent.is_none() {
-            for j in (i + 1)..shuffled_teams.len() {
-                let opponent = shuffled_teams[j];
-                if !paired.contains(&opponent.id) {
-                    best_opponent = Some(opponent);
-                    break;
-                }
-            }
-        }
-
-        if let Some(opponent) = best_opponent {
-            pairings.push((team.id.clone(), Some(opponent.id.clone())));
-            paired.insert(team.id.clone());
-            paired.insert(opponent.id.clone());
+    if shuffled_teams.len() % 2 == 1 {
+        if let Some(bye_team) = select_bye_team(&shuffled_teams, bye_history) {
+            pairings.push((bye_team.id.clone(), None));
+            shuffled_teams.retain(|t| t.id != bye_team.id);
         }
     }
 
-    // Handle BYE
-    if needs_bye {
-        for team in &shuffled_teams {
-            if !paired.contains(&team.id) {
-                pairings.push((team.id.clone(), None));
-                break;
-            }
-        }
-    }
+    pairings.extend(pair_with_graduated_constraints(
+        &shuffled_teams,
+        pairing_history,
+        region_avoidance,
+    ));
+
+    pairings.shuffle(&mut rng);
 
     Ok(pairings)
 }
 
-/// Pool Play pairing: fixed 3-round format
-/// Round 1: Random pairings
-/// Round 2: Winners (1-0) play winners, losers (0-1) play losers
-/// Round 3: Teams with 2 losses are eliminated; teams with 2 wins sit out; teams with 1 win (1-1) play each other
 fn generate_pool_play_round(
     teams: &[Team],
     standings: &HashMap<String, TeamStanding>,
     pairing_history: &HashSet<(String, String)>,
+    bye_history: &HashSet<String>,
     region_avoidance: bool,
     round_number: i32,
 ) -> Result<Vec<(String, Option<String>)>, String> {
@@ -766,7 +817,7 @@ fn generate_pool_play_round(
     match round_number {
         1 => {
             // Round 1: Random pairings (same as Swiss Hotel round 1)
-            generate_swiss_hotel_pairings(teams, pairing_history, region_avoidance, round_number)
+            generate_swiss_hotel_pairings(teams, pairing_history, bye_history, region_avoidance, round_number)
         }
         2 => {
             // Round 2: Winners play winners, losers play losers
@@ -870,74 +921,20 @@ fn pair_teams_with_constraints(
     pairing_history: &HashSet<(String, String)>,
     region_avoidance: bool,
 ) {
-    let mut paired: HashSet<String> = HashSet::new();
-
-    let same_region = |t1: &Team, t2: &Team| -> bool {
-        if let (Some(r1), Some(r2)) = (&t1.region, &t2.region) {
-            !r1.is_empty() && !r2.is_empty() && r1 == r2
-        } else {
-            false
-        }
-    };
-
-    for i in 0..teams.len() {
-        let team = teams[i];
-        if paired.contains(&team.id) {
-            continue;
-        }
-
-        let mut best_opponent: Option<&Team> = None;
-
-        // Pass 1: Full constraints
-        if region_avoidance {
-            for j in (i + 1)..teams.len() {
-                let opponent = teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                if same_region(team, opponent) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 2: Relax region avoidance
-        if best_opponent.is_none() {
-            for j in (i + 1)..teams.len() {
-                let opponent = teams[j];
-                if paired.contains(&opponent.id) {
-                    continue;
-                }
-                if pairing_history.contains(&(team.id.clone(), opponent.id.clone())) {
-                    continue;
-                }
-                best_opponent = Some(opponent);
-                break;
-            }
-        }
-
-        // Pass 3: Any unpaired opponent
-        if best_opponent.is_none() {
-            for j in (i + 1)..teams.len() {
-                let opponent = teams[j];
-                if !paired.contains(&opponent.id) {
-                    best_opponent = Some(opponent);
-                    break;
-                }
-            }
-        }
-
-        if let Some(opponent) = best_opponent {
-            pairings.push((team.id.clone(), Some(opponent.id.clone())));
-            paired.insert(team.id.clone());
-            paired.insert(opponent.id.clone());
-        }
+    // Pool play hands this an already-grouped slice (all the winners, or all
+    // the losers). An odd group leaves one team over; it plays nobody this
+    // round rather than being forced into a repeat, which is what the caller
+    // expects when a pool does not divide evenly.
+    let mut group: Vec<&Team> = teams.to_vec();
+    if group.len() % 2 == 1 {
+        group.pop();
     }
+
+    pairings.extend(pair_with_graduated_constraints(
+        &group,
+        pairing_history,
+        region_avoidance,
+    ));
 }
 
 fn assign_courts(
@@ -1470,4 +1467,296 @@ pub(crate) fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tourna
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn team(id: &str, region: Option<&str>) -> Team {
+        Team {
+            id: id.to_string(),
+            tournament_id: "t".into(),
+            team_number: id[1..].parse().unwrap_or(0),
+            captain: id.to_string(),
+            player2: String::new(),
+            player3: None,
+            region: region.map(|r| r.to_string()),
+            club: None,
+            is_champion: false,
+            created_at: "now".into(),
+        }
+    }
+
+    fn teams(n: usize) -> Vec<Team> {
+        (1..=n).map(|i| team(&format!("T{}", i), None)).collect()
+    }
+
+    fn standing(id: &str, wins: i32) -> TeamStanding {
+        TeamStanding {
+            id: String::new(),
+            tournament_id: "t".into(),
+            team_id: id.into(),
+            wins,
+            losses: 0,
+            points_for: 13 * wins,
+            points_against: 0,
+            differential: wins * 3,
+            buchholz_score: 0.0,
+            fine_buchholz_score: 0.0,
+            point_quotient: 0.0,
+            is_eliminated: false,
+            rank: 0,
+        }
+    }
+
+    fn history(pairs: &[(&str, &str)]) -> HashSet<(String, String)> {
+        let mut h = HashSet::new();
+        for (a, b) in pairs {
+            h.insert((a.to_string(), b.to_string()));
+            h.insert((b.to_string(), a.to_string()));
+        }
+        h
+    }
+
+    fn played_again(pairs: &[(String, Option<String>)], hist: &HashSet<(String, String)>) -> usize {
+        pairs
+            .iter()
+            .filter_map(|(a, b)| b.as_ref().map(|b| (a, b)))
+            .filter(|(a, b)| hist.contains(&((*a).clone(), (*b).clone())))
+            .count()
+    }
+
+    /// Greedy first-fit pairs A-B and then has only D left for C. Searching
+    /// finds A-C plus B-D, which repeats nothing.
+    #[test]
+    fn avoidable_rematch_is_avoided() {
+        let t = teams(4);
+        let hist = history(&[("T3", "T4")]);
+        let standings: HashMap<String, TeamStanding> = HashMap::new();
+
+        let pairs = generate_swiss_pairings(&t, &standings, &hist, &HashSet::new(), false).unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(played_again(&pairs, &hist), 0, "avoidable rematch: {:?}", pairs);
+    }
+
+    /// Across a normal round count nobody should meet twice, whatever way the
+    /// results fall. Run many result sequences, not one lucky seed.
+    ///
+    /// Note the ceiling this stops short of. Swiss pairs one round at a time
+    /// from the standings so far, so it cannot look ahead: a pairing that is
+    /// perfectly legal now can leave a later round with no repeat-free option.
+    /// Measured over 300 result sequences, 8 teams stay clean through 5 rounds
+    /// but not 6, and 16 teams stay clean through 8. Scheduling every round up
+    /// front is what Round Robin is for; past roughly n - 3 rounds, use it.
+    #[test]
+    fn a_normal_round_count_never_repeats() {
+        for (n, rounds) in [(8usize, 5usize), (16, 6), (12, 6), (10, 5), (32, 5)] {
+            let t = teams(n);
+            for seed in 0..40u64 {
+                let mut hist = HashSet::new();
+                let mut byes: HashSet<String> = HashSet::new();
+                let mut wins: HashMap<String, i32> = t.iter().map(|x| (x.id.clone(), 0)).collect();
+                let mut state = seed.wrapping_mul(7919).wrapping_add(13);
+
+                for round in 1..=rounds {
+                    let standings: HashMap<String, TeamStanding> =
+                        t.iter().map(|x| (x.id.clone(), standing(&x.id, wins[&x.id]))).collect();
+                    let pairs =
+                        generate_swiss_pairings(&t, &standings, &hist, &byes, false).unwrap();
+                    assert_eq!(
+                        played_again(&pairs, &hist),
+                        0,
+                        "{} teams, seed {}, round {} repeated a matchup",
+                        n, seed, round
+                    );
+                    for (a, b) in &pairs {
+                        match b {
+                            Some(b) => {
+                                hist.insert((a.clone(), b.clone()));
+                                hist.insert((b.clone(), a.clone()));
+                                state = state
+                                    .wrapping_mul(6364136223846793005)
+                                    .wrapping_add(1442695040888963407);
+                                if (state >> 33) % 2 == 0 {
+                                    *wins.get_mut(a).unwrap() += 1;
+                                } else {
+                                    *wins.get_mut(b).unwrap() += 1;
+                                }
+                            }
+                            None => {
+                                byes.insert(a.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A bye is scored as a win, so it must rotate. Seven teams over five
+    /// rounds should never hand the same team two.
+    #[test]
+    fn byes_rotate_instead_of_landing_on_one_team() {
+        let t = teams(7);
+        let mut hist = HashSet::new();
+        let mut byes: HashSet<String> = HashSet::new();
+        let mut counts: HashMap<String, i32> = HashMap::new();
+
+        for _ in 1..=5 {
+            let standings: HashMap<String, TeamStanding> =
+                t.iter().map(|x| (x.id.clone(), standing(&x.id, 0))).collect();
+            let pairs =
+                generate_swiss_pairings(&t, &standings, &hist, &byes, false).unwrap();
+
+            let bye: Vec<&String> = pairs.iter().filter(|(_, b)| b.is_none()).map(|(a, _)| a).collect();
+            assert_eq!(bye.len(), 1, "odd field should draw exactly one bye");
+            byes.insert(bye[0].clone());
+            *counts.entry(bye[0].clone()).or_insert(0) += 1;
+
+            for (a, b) in &pairs {
+                if let Some(b) = b {
+                    hist.insert((a.clone(), b.clone()));
+                    hist.insert((b.clone(), a.clone()));
+                }
+            }
+        }
+
+        assert_eq!(counts.len(), 5, "byes did not rotate: {:?}", counts);
+        assert!(counts.values().all(|&c| c == 1), "a team drew two byes: {:?}", counts);
+    }
+
+    /// The circle method must actually rotate. The offset was multiplied by
+    /// the modulus, so every round produced the identical set of games.
+    #[test]
+    fn round_robin_gives_every_team_every_opponent() {
+        let t = teams(6);
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut rounds_seen: HashSet<String> = HashSet::new();
+
+        for round in 1..=5 {
+            let pairs = generate_round_robin_pairings(&t, round).unwrap();
+            let mut sig: Vec<String> =
+                pairs.iter().map(|(a, b)| format!("{}v{:?}", a, b)).collect();
+            sig.sort();
+            rounds_seen.insert(sig.join("|"));
+
+            for (a, b) in &pairs {
+                if let Some(b) = b {
+                    let key = if a < b { (a.clone(), b.clone()) } else { (b.clone(), a.clone()) };
+                    assert!(seen.insert(key), "{} played {} twice", a, b);
+                }
+            }
+        }
+
+        assert_eq!(rounds_seen.len(), 5, "rounds were not distinct");
+        // 6 teams, 5 rounds, 3 games each = every one of the 15 pairs exactly once.
+        assert_eq!(seen.len(), 15, "not a complete round robin");
+    }
+
+    /// An odd field rotates the bye through every team.
+    #[test]
+    fn round_robin_rotates_the_bye_when_odd() {
+        let t = teams(5);
+        let mut byes = Vec::new();
+        for round in 1..=5 {
+            let pairs = generate_round_robin_pairings(&t, round).unwrap();
+            let bye: Vec<&String> = pairs.iter().filter(|(_, b)| b.is_none()).map(|(a, _)| a).collect();
+            assert_eq!(bye.len(), 1, "round {} should have one bye", round);
+            byes.push(bye[0].clone());
+        }
+        let distinct: HashSet<&String> = byes.iter().collect();
+        assert_eq!(distinct.len(), 5, "bye did not rotate: {:?}", byes);
+    }
+
+    /// Region avoidance may be relaxed, but only when it genuinely cannot be
+    /// satisfied - and never at the cost of a rematch that was avoidable.
+    #[test]
+    fn region_is_relaxed_before_rematches_are() {
+        // Four teams, two regions, already played across regions. Keeping
+        // regions apart now would force a rematch, so regions give way.
+        let t = vec![
+            team("T1", Some("N")),
+            team("T2", Some("S")),
+            team("T3", Some("N")),
+            team("T4", Some("S")),
+        ];
+        let hist = history(&[("T1", "T2"), ("T3", "T4")]);
+        let standings: HashMap<String, TeamStanding> = HashMap::new();
+
+        let pairs = generate_swiss_pairings(&t, &standings, &hist, &HashSet::new(), true).unwrap();
+        assert_eq!(played_again(&pairs, &hist), 0, "relaxed the wrong constraint: {:?}", pairs);
+    }
+
+    /// The searcher must not hang a tournament on a large field.
+    #[test]
+    fn large_field_pairs_quickly() {
+        let t = teams(128);
+        let standings: HashMap<String, TeamStanding> = HashMap::new();
+        let start = std::time::Instant::now();
+        let pairs =
+            generate_swiss_pairings(&t, &standings, &HashSet::new(), &HashSet::new(), false).unwrap();
+        assert_eq!(pairs.len(), 64);
+        assert!(start.elapsed().as_millis() < 500, "took {:?}", start.elapsed());
+    }
+
+    /// Everyone having played everyone is the one case where a repeat is
+    /// unavoidable. It must still return a full set of games, not give up.
+    #[test]
+    fn exhausted_field_still_pairs() {
+        let t = teams(4);
+        let hist = history(&[("T1", "T2"), ("T1", "T3"), ("T1", "T4"), ("T2", "T3"), ("T2", "T4"), ("T3", "T4")]);
+        let standings: HashMap<String, TeamStanding> = HashMap::new();
+        let pairs = generate_swiss_pairings(&t, &standings, &hist, &HashSet::new(), false).unwrap();
+        assert_eq!(pairs.len(), 2, "should still schedule both games");
+    }
+
+    /// Diagnostic, not an assertion: prints the repeat rate and worst bye
+    /// count per field size. This is what exposed the greedy pairer, and what
+    /// located the round-count ceiling documented on
+    /// `a_normal_round_count_never_repeats`. Run with:
+    ///   cargo test --lib measure_rematch_rate -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn measure_rematch_rate() {
+        for (n, r) in [(128usize, 5usize), (32, 5), (16, 6), (16, 8), (12, 6), (10, 5), (8, 5), (8, 6), (8, 7), (6, 5)] {
+            let t = teams(n);
+            let mut total_re = 0;
+            let mut total_g = 0;
+            let mut worst_byes = 0;
+            for seed in 0..200u64 {
+                let mut hist = HashSet::new();
+                let mut byes: HashSet<String> = HashSet::new();
+                let mut bye_counts: HashMap<String, i32> = HashMap::new();
+                let mut wins: HashMap<String, i32> = t.iter().map(|x| (x.id.clone(), 0)).collect();
+                let mut state = seed * 7919 + 13;
+                for _ in 0..r {
+                    let st: HashMap<String, TeamStanding> =
+                        t.iter().map(|x| (x.id.clone(), standing(&x.id, wins[&x.id]))).collect();
+                    let pairs = generate_swiss_pairings(&t, &st, &hist, &byes, false).unwrap();
+                    for (a, b) in &pairs {
+                        match b {
+                            Some(b) => {
+                                total_g += 1;
+                                if hist.contains(&(a.clone(), b.clone())) { total_re += 1; }
+                                hist.insert((a.clone(), b.clone()));
+                                hist.insert((b.clone(), a.clone()));
+                                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                                if (state >> 33) % 2 == 0 { *wins.get_mut(a).unwrap() += 1; }
+                                else { *wins.get_mut(b).unwrap() += 1; }
+                            }
+                            None => {
+                                byes.insert(a.clone());
+                                *bye_counts.entry(a.clone()).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+                worst_byes = worst_byes.max(bye_counts.values().cloned().max().unwrap_or(0));
+            }
+            let feasible = r <= n - 1;
+            println!("  {:>3} teams / {} rounds: {:>3} rematches of {:>5} games (feasible: {:<5}) worst byes to one team: {}",
+                n, r, total_re, total_g, feasible, worst_byes);
+        }
+    }
 }

@@ -172,7 +172,8 @@
     "quarterFinal": "Quarter-Final",
     "round": "Round {{number}}",
     "enterScore": "Enter Score",
-    "noBrackets": "No brackets generated yet. Complete qualifying rounds first."
+    "noBrackets": "No brackets generated yet. Complete qualifying rounds first.",
+    "notDrawable": "This bracket has too few teams to draw."
   },
   "export": {
     "title": "Export",
@@ -230,7 +231,8 @@
     "buchholz": "Buch",
     "fineBuchholz": "FBuch",
     "pointQuotient": "PQ",
-    "tiebreakerPanache": "Ties broken by: wins, then point differential."
+    "tiebreakerPanache": "Ties broken by: wins, then point differential.",
+    "nothingToShow": "Nothing to show yet."
   },
   "validation": {
     "required": "This field is required",

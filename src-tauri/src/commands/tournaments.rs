@@ -217,6 +217,35 @@ pub fn update_tournament(
         }
     }
 
+    // Courts cap the roster: a game needs a court, and a panache game needs a
+    // whole one. Registration enforces that when teams are added, but nothing
+    // stopped the courts being lowered afterwards, which left a tournament
+    // holding more teams than it could ever put on the ground.
+    let registered: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if registered > 0 {
+        let per_court = if data.pairing_method == "panache" {
+            if data.format == "triple" { 6 } else { 4 }
+        } else {
+            2
+        };
+        let capacity = data.number_of_courts * per_court;
+        if registered > capacity {
+            let noun = if data.pairing_method == "panache" { "players" } else { "teams" };
+            return Err(format!(
+                "{} {} are registered, but {} courts only hold {} ({} courts x {}). Remove {} or add courts.",
+                registered, noun, data.number_of_courts, capacity,
+                data.number_of_courts, per_court, noun
+            ));
+        }
+    }
+
     let now = Utc::now().to_rfc3339();
 
     conn.execute(
