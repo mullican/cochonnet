@@ -2,6 +2,7 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, TeamStanding } from '../../types';
 import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
+import { pageProps, PdfLogo, LOGO_BOX } from './pdfPage';
 
 const styles = StyleSheet.create({
   page: {
@@ -11,6 +12,8 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 20,
+    // Keeps the title clear of the logo box in the top-right corner.
+    paddingRight: LOGO_BOX.width + 10,
   },
   title: {
     fontSize: 18,
@@ -20,6 +23,11 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 12,
     color: '#666',
+  },
+  withdrawn: {
+    fontSize: 8,
+    color: '#a00',
+    marginLeft: 4,
   },
   table: {
     width: '100%',
@@ -100,8 +108,9 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
 
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
+      <Page {...pageProps(tournament)} style={styles.page}>
         <View style={styles.header}>
+          <PdfLogo tournament={tournament} />
           <Text style={styles.title}>{tournament.name}</Text>
           <Text style={styles.subtitle}>
             {t.standingsAsOf} {formatDate(new Date().toISOString())}
@@ -138,6 +147,11 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
               <Text style={[styles.rankCol, styles.bold]}>{standing.rank}</Text>
               <View style={styles.teamCol}>
                 <TeamLabelPDF team={getTeam(standing.teamId)} fontSize={10} fallback="TBD" />
+                {/* Their results stand, so they keep their row; the note is what
+                    tells a reader why they stopped collecting any. */}
+                {getTeam(standing.teamId)?.isWithdrawn && (
+                  <Text style={styles.withdrawn}>{t.withdrawn}</Text>
+                )}
               </View>
               <Text style={styles.statCol}>{standing.wins}</Text>
               <Text style={styles.statCol}>{standing.losses}</Text>

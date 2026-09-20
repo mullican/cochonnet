@@ -32,11 +32,28 @@ This is a **Tauri 2** desktop application with:
 
 | Method | Generation | Ranking | Description |
 |--------|------------|---------|-------------|
-| **Swiss** | Round-by-round | Buchholz | Teams with similar records play each other. Prior round must complete before generating next. |
-| **Swiss Hotel** | All at once | Point Quotient | Random pairings pre-generated upfront with graduated constraints. |
-| **Round Robin** | All at once | Point Quotient | Berger circle method - each team plays every other team. |
-| **Pool Play** | Round-by-round | Point Quotient | Fixed 3 rounds: R1 random, R2 winners vs winners, R3 only 1-1 teams play. Teams with 2 losses eliminated. |
-| **Panaché** | All at once, redrawable | Wins → Differential | Individual registration. Players are shuffled into fresh temporary teams each round. No bracket — one final game. |
+| **Swiss** | Round-by-round only | Buchholz | Teams with similar records play each other. Prior round must complete before generating next. |
+| **Swiss Hotel** | All at once **or** round-by-round | Point Quotient | Random pairings with graduated constraints. |
+| **Round Robin** | All at once **or** round-by-round | Point Quotient | Berger circle method - each team plays every other team. |
+| **Pool Play** | Round-by-round only | Point Quotient | Fixed 3 rounds: R1 random, R2 winners vs winners, R3 only 1-1 teams play. Teams with 2 losses eliminated. |
+| **Panaché** | All at once (redrawable) **or** round-by-round | Wins → Differential | Individual registration. Players are shuffled into fresh temporary teams each round. No bracket — one final game. |
+
+Swiss and Pool Play build each round from the last one's results, so they can only be drawn
+one at a time. The other three can be drawn either way, and `QualifyingRounds.tsx` offers both
+buttons: drawing the whole schedule up front is what those formats are usually chosen for,
+while one round at a time is what a director wants when the roster may still move.
+
+### Withdrawal
+
+A team that pulls out mid-tournament cannot be deleted — its played games and its opponents'
+Buchholz depend on it — so `teams.is_withdrawn` flags it instead. The flag is forward-only:
+completed results stand, the game already scheduled in the current round is left for the
+operator to score however they decide, and only draws made from then on leave the team out.
+
+Every query that *schedules* filters on `is_withdrawn = 0` (the team load in
+`generate_single_round`, round robin's cycle cap, `load_players` in `panache.rs`, bracket
+seeding in `brackets.rs`, and both roster-capacity checks). `get_teams` deliberately does not:
+the roster page has to keep showing everyone.
 
 ### Panaché (individual format)
 
@@ -68,18 +85,72 @@ Key points:
   order: champions sharing a team (1000) > repeated teammates (100) > a non-champion who never
   meets a champion (50) > repeated opponents (10) > sit-out imbalance (5).
 
+### Court Assignment
+
+`courts.rs` holds a pure solver, in the same shape as the panaché scheduler: randomized greedy
+with restarts over a weighted cost, no database access, unit-tested on its own.
+
+Constraints are costs, not filters, because a round has to be drawn even when every choice
+breaks something. A team drawing the same court **in consecutive rounds** costs 1000; the same
+court **at any earlier point** costs 100. Weighting the consecutive repeat higher is what
+encodes the rule: with courts to spare the solver reaches zero and nobody repeats, and when it
+cannot it spends the cheap repeats first.
+
+- Identity is the competitor, which for panaché means the **player** — the temporary team is
+  gone by the next round, the person is not.
+- `court_history` was written from the start and never read until now; `load_qualifying_history`
+  is what it was for.
+- Brackets reuse the solver per **wave** (`play_wave` in `brackets.rs`), seeded with the
+  qualifying history and extended wave by wave. Bracket courts are *not* written to
+  `court_history` — its `round_id` foreign-keys `qualifying_rounds` — they are derived from
+  `bracket_matches` instead.
+- `assign_bracket_courts` re-runs on every result, so a match whose teams have just arrived
+  gets a court chosen against their history. Two things are never moved by that re-run: a
+  match already played or hand-set (`bracket_matches.court_is_manual`) — it keeps its court
+  and takes it out of what the rest of the wave can share — and **any wave that already has a
+  score in it**, because the other games in that wave are on the ground right now, on the
+  courts the printed sheet sent them to.
+- Courts are editable **until the game is played**. After that the court is a record of where
+  it happened, so the field is not offered and `move_game_to_court` / `move_match_to_court`
+  refuse it outright. A double-booking, by contrast, is **highlighted, not refused**:
+  shuffling games around means passing through one, and being blocked mid-shuffle is worse
+  than the clash. Qualifying checks this client-side; brackets need
+  `get_bracket_court_conflicts`, because a wave spans every bracket while the store only ever
+  holds one.
+
+**Key Functions in `courts.rs`:**
+- `assign_courts()` / `assign_courts_from_slots()` - the pure draw
+- `load_qualifying_history()` - the database adapter
+- `court_slots()` - the courts one set of simultaneous games shares. Note it offers
+  `1..=game_count`, so a venue with more courts than games only ever uses the low-numbered
+  ones. Games stay compact, but rotation quality is bounded by the game count, not the court
+  count - relevant if a field is ever much smaller than its venue.
+
+Tests of the draw assert the *invariant*, and only the one that is actually reachable. "Never
+the same court twice running" holds when each game has one court to avoid (fixed pairings, as
+in the solver's own tests). It does not hold in general: pairings that reshuffle bring two
+different courts to avoid into one game, and with only as many courts as games there may be no
+assignment that satisfies everyone. Asserting it against live pairings produces a test that
+passes most of the time, which is worse than no test.
+
 **Key Functions in `qualifying.rs`:**
 - `generate_swiss_pairings()` - Pairs teams by similar win records
 - `generate_swiss_hotel_pairings()` - Random pairing with constraints
 - `generate_pool_play_round()` - Round-specific Pool Play logic
 - `calculate_buchholz_and_ranks()` - Swiss tiebreaker calculation
 - `calculate_point_quotient_ranks()` - Point quotient tiebreaker calculation
+- `generate_single_round()` - Draws one round; `enforce_prior_complete` is set when the
+  operator asked for this one round on its own, and off when the whole schedule is drawn up front
 - `complete_round()` - Score processing and rank updates
 - `apply_game_result()` - Adds one result to each competitor's standing (a team, or every member of a panaché temporary team)
 
 **Key Functions in `panache.rs`:**
-- `solve_panache_schedule()` - Draws the whole schedule; pure, unit-tested, no DB access
-- `generate_panache_rounds()` / `redraw_panache_rounds()` / `generate_panache_final()` - Commands
+- `solve_panache_schedule()` - Draws a schedule; pure, unit-tested, no DB access. Takes already
+  drawn rounds as `fixed`, which is what lets one round be added at a time
+- `generate_panache_rounds()` / `generate_panache_round()` / `redraw_panache_rounds()` /
+  `generate_panache_final()` - Commands
+- `set_team_withdrawn()` - Flags an entrant as having pulled out (lives here beside
+  `set_team_champion`)
 
 Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 
@@ -104,24 +175,43 @@ Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 - Supports consolante (consolation) brackets
 
 ### PDF Export
-- `src/features/export/ScoreSheetPDF.tsx` - Score cards for each round
+- `src/features/export/pdfPage.tsx` - Paper sizes and the logo box, shared by all three documents
+- `src/features/export/CourtAssignmentsPDF.tsx` - Court sheet for each round
 - `src/features/export/StandingsPDF.tsx` - Standings table PDF
 - `src/features/export/BracketPDF.tsx` - Bracket visualization PDF
 - `src/features/export/ExportView.tsx` - Export UI and file saving
 - Uses Tauri dialog plugin for save dialogs
+
+**Paper size and logo** are tournament settings, so every document gets them from the
+`tournament` prop it already receives:
+
+- `pageProps(tournament, orientation)` supplies `<Page size>`; the four sizes are US Letter
+  (the default), US Tabloid, A4 and A3. Never hard-code `size="A4"` again.
+- `BracketPDF` lays itself out by hand and so also needs `contentSize(...)`: its column width
+  and row spacing are derived from the chosen page, which is what lets a deep bracket
+  genuinely benefit from bigger paper instead of being squeezed to the minimum.
+- `<PdfLogo tournament />` draws `tournaments.logo` (a data URI) absolutely in the top-right,
+  fitted inside a bounding box; each header reserves that much padding on its right. The
+  upload accepts **PNG and JPEG only** — those are the formats `@react-pdf`'s `Image` can
+  draw, so an SVG would silently come out blank — and caps at 2 MB, because the data URI
+  travels in the database and in every backup file.
+- With **All Teams Seeded into Brackets** on, a consolante prints as "Concours AA" rather than
+  "Consolante AA": each bracket is a concours in its own right. Internally it is still
+  `is_consolante`, and the on-screen labels are unchanged.
 
 ## Database Schema
 
 Located in `src-tauri/src/db/schema.rs`:
 
 **Core Tables:**
-- `tournaments` - Tournament configuration
-- `teams` - Registered teams
+- `tournaments` - Tournament configuration (incl. `paper_size` and `logo`, the print settings)
+- `teams` - Registered teams (`is_withdrawn` flags one that pulled out mid-tournament)
 - `qualifying_rounds` - Round metadata
 - `qualifying_games` - Individual game results
 - `team_standings` - Computed standings (denormalized)
 - `brackets` - Elimination bracket metadata
-- `bracket_matches` - Elimination match results
+- `bracket_matches` - Elimination match results (`court_is_manual` protects a hand-set court
+  from the automatic renumbering)
 - `pairing_history` - Tracks previous matchups
 - `court_history` - Court assignment tracking
 - `panache_teams` / `panache_team_members` - Panaché temporary teams, per round
@@ -170,12 +260,32 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 2. Register in `lib.rs` invoke_handler
 3. Call from frontend using `invoke<ReturnType>('command_name', { args })`
 
+### Adding a column to `tournaments` or `teams`:
+1. Add it to the `CREATE TABLE` in `schema.rs` **and** to an `add_column_if_missing` call at
+   the end of `create_tables`. Leave the CHECK-constraint rebuild DDL alone — it runs *before*
+   those ALTERs and copies an explicit column list out of the old table, so naming a new
+   column there would abort the whole rebuild silently.
+2. Add the field to the struct in `models/mod.rs`, with **`#[serde(default)]`**:
+   `TournamentBackup` embeds `Tournament` and `Team` bare, so without it every backup file
+   written before the column existed fails to import.
+3. Extend every positional SQL site: `tournaments.rs` / `teams.rs` (select, insert, update)
+   and **`backup.rs`** (both the export read and the restore insert).
+4. Add it to `types/index.ts`, then to `TournamentForm.tsx` *and* the four hand-written
+   mapping sites in `TournamentCreate.tsx` / `TournamentEdit.tsx` — they cast with `as any`,
+   so a missed field is dropped silently rather than caught by `tsc`.
+5. Add the `(table, column)` pair to `migrations_add_the_panache_columns` in `schema.rs`.
+
 ## Tests
 
 `cd src-tauri && cargo test` — the only automated tests in the repo. They cover the panaché
 scheduler (sit-out rotation, no repeated teammates, champion separation and exposure), the
-panaché database round-trip (sides persist, a shared score lands on each member), and the
-schema migrations.
+panaché database round-trip (sides persist, a shared score lands on each member), the court
+solver, round generation against a real database (withdrawal, byes, the round-by-round
+guards), bracket court assignment, the backup round-trip, and the schema migrations.
+
+Court and bracket tests assert the *invariant*, never the exact numbering: which game gets
+which court is the draw's business, so a test that pins the old sequential order is testing
+the wrong thing.
 
 The migration test matters most: the `tournaments` CHECK-constraint rebuild is invoked with
 `.ok()`, so a failure is **silent** — the data survives but the table keeps its old constraint

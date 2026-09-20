@@ -34,7 +34,7 @@ function parseChampionFlag(value: string | undefined): boolean {
 export function TeamsList({ tournamentId }: TeamsListProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { teams, qualifyingRounds, currentTournament, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds, setTeamChampion } = useTournamentStore();
+  const { teams, qualifyingRounds, currentTournament, loading, fetchTeams, createTeam, updateTeam, deleteTeam, deleteAllTeams, importTeams, fetchQualifyingRounds, setTeamChampion, setTeamWithdrawn } = useTournamentStore();
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -74,6 +74,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
         region: data.region || null,
         club: data.club || null,
         isChampion: data.isChampion,
+        isWithdrawn: data.isWithdrawn,
       });
       setAddDialogOpen(false);
     } catch (error) {
@@ -95,6 +96,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
         region: data.region || null,
         club: data.club || null,
         isChampion: data.isChampion,
+        isWithdrawn: data.isWithdrawn,
       });
       setEditDialogOpen(false);
       setSelectedTeam(null);
@@ -147,6 +149,8 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
             region: row.region || null,
             club: row.club || null,
             isChampion: isPanache ? parseChampionFlag(row.champion) : false,
+            // An imported roster is a fresh roster; nobody has pulled out yet.
+            isWithdrawn: false,
           }));
 
           // A second player is only required by formats that actually have one.
@@ -267,6 +271,8 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                 {showPlayer2 && <TableHead>{t('teams.player2')}</TableHead>}
                 {showPlayer3 && <TableHead>{t('teams.player3')}</TableHead>}
                 {isPanache && <TableHead className="w-28">{t('teams.champion')}</TableHead>}
+                {/* Only worth a column once there is a tournament to pull out of. */}
+                {hasRounds && <TableHead className="w-28">{t('teams.withdrawn')}</TableHead>}
                 <TableHead>{t('teams.region')}</TableHead>
                 <TableHead>{t('teams.club')}</TableHead>
                 <TableHead className="w-24">{t('common.actions')}</TableHead>
@@ -274,7 +280,7 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
             </TableHeader>
             <TableBody>
               {[...teams].sort((a, b) => a.teamNumber - b.teamNumber).map((team) => (
-                <TableRow key={team.id}>
+                <TableRow key={team.id} className={team.isWithdrawn ? 'text-gray-400 line-through' : ''}>
                   <TableCell className="font-medium">{team.teamNumber}</TableCell>
                   <TableCell className="font-medium">{team.captain}</TableCell>
                   {showPlayer2 && <TableCell>{team.player2}</TableCell>}
@@ -291,6 +297,23 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                         {team.isChampion && (
                           <span className="text-xs font-medium text-amber-700">
                             {t('teams.champion')}
+                          </span>
+                        )}
+                      </label>
+                    </TableCell>
+                  )}
+                  {hasRounds && (
+                    <TableCell>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={team.isWithdrawn}
+                          onChange={(e) => setTeamWithdrawn(team.id, e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        {team.isWithdrawn && (
+                          <span className="text-xs font-medium text-red-700">
+                            {t('teams.withdrawn')}
                           </span>
                         )}
                       </label>
@@ -377,9 +400,11 @@ export function TeamsList({ tournamentId }: TeamsListProps) {
                 region: selectedTeam.region || '',
                 club: selectedTeam.club || '',
                 isChampion: selectedTeam.isChampion,
+                isWithdrawn: selectedTeam.isWithdrawn,
               }}
               showPlayer3={showPlayer3}
               isPanache={isPanache}
+              showWithdrawn
               onSubmit={handleEditTeam}
               onCancel={() => {
                 setEditDialogOpen(false);

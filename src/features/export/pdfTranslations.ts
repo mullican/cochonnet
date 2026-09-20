@@ -43,4 +43,6 @@ export interface PDFTranslations {
   sittingOut: string;
   /** Shown in place of a page when a document has nothing to render. */
   nothingToShow: string;
+  /** Marks an entrant who pulled out; their played results still stand. */
+  withdrawn: string;
 }

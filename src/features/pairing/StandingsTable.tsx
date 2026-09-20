@@ -26,7 +26,11 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
   const isPanache = pairingMethod === 'panache';
   const showBuchholz = pairingMethod === 'swiss';
   const showPointQuotient = pairingMethod === 'swissHotel' || pairingMethod === 'roundRobin' || pairingMethod === 'poolPlay';
-  const showStatus = pairingMethod === 'poolPlay';
+  // A withdrawal is worth calling out wherever eliminations already are, and in
+  // the formats that have no eliminations it is the only thing the column says.
+  const hasWithdrawals = teams.some((team) => team.isWithdrawn);
+  const isPoolPlay = pairingMethod === 'poolPlay';
+  const showStatus = isPoolPlay || hasWithdrawals;
 
   useEffect(() => {
     fetchStandings(tournamentId);
@@ -81,7 +85,11 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
           {sortedStandings.map((standing) => (
             <TableRow
               key={standing.id}
-              className={standing.isEliminated ? 'opacity-50 bg-gray-50' : ''}
+              className={
+                standing.isEliminated || getTeam(standing.teamId)?.isWithdrawn
+                  ? 'opacity-50 bg-gray-50'
+                  : ''
+              }
             >
               <TableCell className="font-medium">{standing.rank}</TableCell>
               <TableCell className="font-medium">
@@ -125,9 +133,11 @@ export function StandingsTable({ tournamentId }: StandingsTableProps) {
               </TableCell>
               {showStatus && (
                 <TableCell className="text-center">
-                  {standing.isEliminated ? (
+                  {getTeam(standing.teamId)?.isWithdrawn ? (
+                    <span className="text-red-600">{t('teams.withdrawn')}</span>
+                  ) : standing.isEliminated ? (
                     <span className="text-red-600">{t('pairing.eliminated')}</span>
-                  ) : standing.wins >= 2 ? (
+                  ) : isPoolPlay && standing.wins >= 2 ? (
                     <span className="text-green-600">{t('pairing.qualified')}</span>
                   ) : null}
                 </TableCell>

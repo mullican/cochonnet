@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useTournamentStore } from '../../stores/tournamentStore';
@@ -18,21 +18,36 @@ export function TournamentEdit() {
     brackets,
     fetchQualifyingRounds,
     fetchBrackets,
+    umpires,
+    fetchUmpires,
   } = useTournamentStore();
+
+  // The form reads its defaults once, when it mounts, so it must not mount
+  // until the umpires are in - otherwise it opens with an empty list and
+  // saving wipes them.
+  const [umpiresLoaded, setUmpiresLoaded] = useState(false);
+  // The backend refuses some edits outright - the courts, round count and
+  // pairing method of a tournament that is already under way. Those fields are
+  // disabled in the form, but a refusal has to be readable if one gets through
+  // at all; this used to go to console.error and the save just did nothing.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
+      setUmpiresLoaded(false);
       fetchTournament(id);
       fetchQualifyingRounds(id);
       fetchBrackets(id);
+      fetchUmpires(id).finally(() => setUmpiresLoaded(true));
     }
-  }, [id, fetchTournament, fetchQualifyingRounds, fetchBrackets]);
+  }, [id, fetchTournament, fetchQualifyingRounds, fetchBrackets, fetchUmpires]);
 
   const hasQualifyingRounds = qualifyingRounds.length > 0;
   const hasBrackets = brackets.length > 0;
 
   const handleSubmit = async (data: TournamentFormData) => {
     if (!id) return;
+    setSaveError(null);
 
     try {
       await updateTournament(id, {
@@ -43,6 +58,9 @@ export function TournamentEdit() {
         endDate: data.endDate,
         director: data.director,
         headUmpire: data.headUmpire,
+        // Always sent, even when empty: that is how a removed umpire is
+        // actually removed.
+        additionalUmpires: data.additionalUmpires.map((umpire) => umpire.value),
         format: data.format,
         numberOfCourts: data.numberOfCourts,
         numberOfQualifyingRounds: data.numberOfQualifyingRounds,
@@ -52,14 +70,16 @@ export function TournamentEdit() {
         bracketSize: data.bracketSize,
         pairingMethod: data.pairingMethod,
         regionAvoidance: data.regionAvoidance,
+        paperSize: data.paperSize,
+        logo: data.logo,
       } as any);
       navigate(`/tournaments/${id}`);
     } catch (error) {
-      console.error('Failed to update tournament:', error);
+      setSaveError(String(error));
     }
   };
 
-  if (loading && !currentTournament) {
+  if ((loading && !currentTournament) || !umpiresLoaded) {
     return <div className="text-center py-8 text-gray-500">{t('common.loading')}</div>;
   }
 
@@ -100,7 +120,7 @@ export function TournamentEdit() {
           endDate: currentTournament.endDate.split('T')[0],
           director: currentTournament.director,
           headUmpire: currentTournament.headUmpire,
-          additionalUmpires: [],
+          additionalUmpires: umpires.map((umpire) => ({ value: umpire.name })),
           format: currentTournament.format,
           numberOfCourts: currentTournament.numberOfCourts,
           numberOfQualifyingRounds: currentTournament.numberOfQualifyingRounds,
@@ -110,12 +130,15 @@ export function TournamentEdit() {
           bracketSize: currentTournament.bracketSize,
           pairingMethod: currentTournament.pairingMethod,
           regionAvoidance: currentTournament.regionAvoidance,
+          paperSize: currentTournament.paperSize,
+          logo: currentTournament.logo,
         }}
         onSubmit={handleSubmit}
         onCancel={() => navigate(`/tournaments/${id}`)}
         isLoading={loading}
         hasQualifyingRounds={hasQualifyingRounds}
         hasBrackets={hasBrackets}
+        error={saveError}
       />
     </div>
   );

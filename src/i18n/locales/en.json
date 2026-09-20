@@ -90,7 +90,17 @@
     "numberOfQualifyingRounds": "Number of Qualifying Rounds",
     "noTournaments": "No tournaments yet. Create your first tournament to get started.",
     "qualifyingRounds": "Qualifying Rounds",
-    "teamsRegistered": "Teams Registered"
+    "teamsRegistered": "Teams Registered",
+    "paperSize": "Paper Size",
+    "paperSizeOptions": {
+      "letter": "US Letter",
+      "tabloid": "US Tabloid",
+      "a4": "A4",
+      "a3": "A3"
+    },
+    "logo": "Logo",
+    "logoHint": "PNG or JPEG, up to 2 MB. Printed in the upper right of every PDF.",
+    "lockedAfterRounds": "Courts, qualifying rounds and pairing method are fixed once the rounds have been generated. Delete all rounds to change them."
   },
   "teams": {
     "title": "Teams",
@@ -118,7 +128,9 @@
     "importSuccess": "Successfully imported {{count}} teams",
     "importError": "Error importing teams: {{error}}",
     "importMissingFields": "Some teams are missing required fields (captain, player 2)",
-    "importMissingName": "Some rows are missing a name"
+    "importMissingName": "Some rows are missing a name",
+    "withdrawn": "Withdrawn",
+    "withdrawnHint": "Keeps the games already played and leaves this entrant out of every later draw."
   },
   "pairing": {
     "title": "Qualifying Rounds",
@@ -158,7 +170,10 @@
     "redrawConfirm": "This re-shuffles round {{number}} and every round after it against the current roster. Completed rounds are left as they were drawn.",
     "sittingOut": "Sitting out",
     "notEnoughPlayers": "At least {{count}} players are needed before rounds can be drawn.",
-    "noStandings": "No standings yet. Complete a qualifying round to see standings."
+    "noStandings": "No standings yet. Complete a qualifying round to see standings.",
+    "courtClash": "Two games on this court",
+    "courtOutOfRange": "This tournament has {{count}} courts",
+    "courtClashSummary": "Some games share a court. You can carry on, but check before printing."
   },
   "brackets": {
     "title": "Elimination Rounds",
@@ -173,7 +188,11 @@
     "round": "Round {{number}}",
     "enterScore": "Enter Score",
     "noBrackets": "No brackets generated yet. Complete qualifying rounds first.",
-    "notDrawable": "This bracket has too few teams to draw."
+    "notDrawable": "This bracket has too few teams to draw.",
+    "courtClash": "Another game is on this court at the same time",
+    "courtOnly": "This match cannot be scored yet, but its court can be changed.",
+    "tiedScore": "Scores cannot be tied. One team must win.",
+    "editCourt": "Change Court"
   },
   "export": {
     "title": "Export",
@@ -232,7 +251,8 @@
     "fineBuchholz": "FBuch",
     "pointQuotient": "PQ",
     "tiebreakerPanache": "Ties broken by: wins, then point differential.",
-    "nothingToShow": "Nothing to show yet."
+    "nothingToShow": "Nothing to show yet.",
+    "withdrawn": "(withdrawn)"
   },
   "validation": {
     "required": "This field is required",
@@ -240,6 +260,8 @@
     "maxLength": "Maximum {{count}} characters allowed",
     "invalidDate": "Invalid date",
     "endDateBeforeStart": "End date must be after start date",
-    "positiveNumber": "Must be a positive number"
+    "positiveNumber": "Must be a positive number",
+    "logoFormat": "The logo must be a PNG or JPEG image.",
+    "logoTooLarge": "The logo must be smaller than 2 MB."
   }
 }

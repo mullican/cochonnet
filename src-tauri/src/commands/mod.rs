@@ -1,5 +1,6 @@
 pub mod tournaments;
 pub mod teams;
+pub mod courts;
 pub mod qualifying;
 pub mod brackets;
 pub mod panache;

@@ -23,6 +23,8 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             bracket_size INTEGER NOT NULL DEFAULT 16,
             pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay', 'panache')),
             region_avoidance INTEGER NOT NULL DEFAULT 0,
+            paper_size TEXT NOT NULL DEFAULT 'letter',
+            logo TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -45,6 +47,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             player3 TEXT,
             region TEXT,
             club TEXT,
+            is_withdrawn INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
         );
@@ -120,6 +123,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             winner_id TEXT,
             next_match_id TEXT,
             is_bye INTEGER NOT NULL DEFAULT 0,
+            court_is_manual INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (bracket_id) REFERENCES brackets(id) ON DELETE CASCADE,
             FOREIGN KEY (team1_id) REFERENCES teams(id) ON DELETE SET NULL,
             FOREIGN KEY (team2_id) REFERENCES teams(id) ON DELETE SET NULL,
@@ -423,6 +427,49 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         "ALTER TABLE qualifying_games ADD COLUMN side2_id TEXT",
     );
 
+    // Migration: Add the printing settings to tournaments.
+    //
+    // These must stay below the CHECK-constraint rebuild above: that rebuild
+    // copies an explicit column list out of the old table, so naming a column
+    // there that an older database has not got yet would abort the whole batch
+    // - silently, because it runs under `.ok()`. Rebuilding first and adding
+    // the columns afterwards upgrades every schema version the same way.
+    add_column_if_missing(
+        conn,
+        "tournaments",
+        "paper_size",
+        "ALTER TABLE tournaments ADD COLUMN paper_size TEXT NOT NULL DEFAULT 'letter'",
+    );
+    // A data URI rather than a path: the logo has to survive a backup export and
+    // land intact on whatever machine restores it.
+    add_column_if_missing(
+        conn,
+        "tournaments",
+        "logo",
+        "ALTER TABLE tournaments ADD COLUMN logo TEXT",
+    );
+
+    // Migration: Add is_withdrawn to teams. A team that pulls out mid-tournament
+    // cannot be deleted - its played games and its opponents' Buchholz depend on
+    // it - so it is flagged instead and skipped by later draws.
+    add_column_if_missing(
+        conn,
+        "teams",
+        "is_withdrawn",
+        "ALTER TABLE teams ADD COLUMN is_withdrawn INTEGER NOT NULL DEFAULT 0",
+    );
+
+    // Migration: Add court_is_manual to bracket_matches. Bracket courts are
+    // renumbered tournament-wide whenever a bracket is added or a match is
+    // scored; this flag is what keeps an operator's hand-edited court from being
+    // overwritten by the next run.
+    add_column_if_missing(
+        conn,
+        "bracket_matches",
+        "court_is_manual",
+        "ALTER TABLE bracket_matches ADD COLUMN court_is_manual INTEGER NOT NULL DEFAULT 0",
+    );
+
     Ok(())
 }
 
@@ -611,6 +658,10 @@ mod tests {
             ("qualifying_rounds", "is_final"),
             ("qualifying_games", "side1_id"),
             ("qualifying_games", "side2_id"),
+            ("tournaments", "paper_size"),
+            ("tournaments", "logo"),
+            ("teams", "is_withdrawn"),
+            ("bracket_matches", "court_is_manual"),
         ] {
             let present: bool = conn
                 .query_row(

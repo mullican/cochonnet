@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useTournamentStore } from '../../stores/tournamentStore';
@@ -8,8 +9,10 @@ export function TournamentCreate() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { createTournament, loading } = useTournamentStore();
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSubmit = async (data: TournamentFormData) => {
+    setSaveError(null);
     try {
       const tournament = await createTournament({
         name: data.name,
@@ -19,6 +22,10 @@ export function TournamentCreate() {
         endDate: data.endDate,
         director: data.director,
         headUmpire: data.headUmpire,
+        // The field array holds objects so react-hook-form can key the rows;
+        // the command wants plain names. Leaving this out was why umpires
+        // entered on the form never reached the database.
+        additionalUmpires: data.additionalUmpires.map((umpire) => umpire.value),
         format: data.format,
         numberOfCourts: data.numberOfCourts,
         numberOfQualifyingRounds: data.numberOfQualifyingRounds,
@@ -28,10 +35,12 @@ export function TournamentCreate() {
         bracketSize: data.bracketSize,
         pairingMethod: data.pairingMethod,
         regionAvoidance: data.regionAvoidance,
+        paperSize: data.paperSize,
+        logo: data.logo,
       } as any);
       navigate(`/tournaments/${tournament.id}`);
     } catch (error) {
-      console.error('Failed to create tournament:', error);
+      setSaveError(String(error));
     }
   };
 
@@ -63,6 +72,7 @@ export function TournamentCreate() {
         onSubmit={handleSubmit}
         onCancel={() => navigate('/')}
         isLoading={loading}
+        error={saveError}
       />
     </div>
   );

@@ -90,7 +90,17 @@
     "numberOfQualifyingRounds": "Nombre de Tours de Qualification",
     "noTournaments": "Pas encore de tournois. Créez votre premier tournoi pour commencer.",
     "qualifyingRounds": "Tours de Qualification",
-    "teamsRegistered": "Équipes Inscrites"
+    "teamsRegistered": "Équipes Inscrites",
+    "paperSize": "Format de Papier",
+    "paperSizeOptions": {
+      "letter": "US Letter",
+      "tabloid": "US Tabloid",
+      "a4": "A4",
+      "a3": "A3"
+    },
+    "logo": "Logo",
+    "logoHint": "PNG ou JPEG, jusqu'à 2 Mo. Imprimé en haut à droite de chaque PDF.",
+    "lockedAfterRounds": "Les pistes, les tours de qualification et la méthode d’appariement sont figés une fois les tours générés. Supprimez tous les tours pour les modifier."
   },
   "teams": {
     "title": "Équipes",
@@ -118,7 +128,9 @@
     "importSuccess": "{{count}} équipes importées avec succès",
     "importError": "Erreur lors de l'importation: {{error}}",
     "importMissingFields": "Certaines équipes n’ont pas les champs requis (capitaine, joueur 2)",
-    "importMissingName": "Certaines lignes n’ont pas de nom"
+    "importMissingName": "Certaines lignes n’ont pas de nom",
+    "withdrawn": "Forfait",
+    "withdrawnHint": "Conserve les parties déjà jouées et exclut cet inscrit de tous les tirages suivants."
   },
   "pairing": {
     "title": "Tours de Qualification",
@@ -158,7 +170,10 @@
     "redrawConfirm": "Ceci remélange la ronde {{number}} et toutes les suivantes selon la liste actuelle. Les rondes terminées restent telles qu’elles ont été tirées.",
     "sittingOut": "Au repos",
     "notEnoughPlayers": "Il faut au moins {{count}} joueurs avant de tirer les rondes.",
-    "noStandings": "Aucun classement. Terminez une ronde de qualification pour voir le classement."
+    "noStandings": "Aucun classement. Terminez une ronde de qualification pour voir le classement.",
+    "courtClash": "Deux parties sur cette piste",
+    "courtOutOfRange": "Ce concours compte {{count}} pistes",
+    "courtClashSummary": "Des parties partagent une piste. Vous pouvez continuer, mais vérifiez avant d'imprimer."
   },
   "brackets": {
     "title": "Éliminatoires",
@@ -173,7 +188,11 @@
     "round": "Tour {{number}}",
     "enterScore": "Entrer le Score",
     "noBrackets": "Pas de tableaux générés. Terminez d'abord les tours de qualification.",
-    "notDrawable": "Ce tableau a trop peu d'équipes pour être dessiné."
+    "notDrawable": "Ce tableau a trop peu d'équipes pour être dessiné.",
+    "courtClash": "Une autre partie occupe cette piste en même temps",
+    "courtOnly": "Cette partie ne peut pas encore être notée, mais sa piste peut être changée.",
+    "tiedScore": "Les scores ne peuvent pas être à égalité. Une équipe doit gagner.",
+    "editCourt": "Changer de Piste"
   },
   "export": {
     "title": "Exporter",
@@ -232,7 +251,8 @@
     "fineBuchholz": "FBuch",
     "pointQuotient": "QP",
     "tiebreakerPanache": "Départage : victoires, puis différence de points.",
-    "nothingToShow": "Rien à afficher pour l'instant."
+    "nothingToShow": "Rien à afficher pour l'instant.",
+    "withdrawn": "(forfait)"
   },
   "validation": {
     "required": "Ce champ est obligatoire",
@@ -240,6 +260,8 @@
     "maxLength": "Maximum {{count}} caractères autorisés",
     "invalidDate": "Date invalide",
     "endDateBeforeStart": "La date de fin doit être après la date de début",
-    "positiveNumber": "Doit être un nombre positif"
+    "positiveNumber": "Doit être un nombre positif",
+    "logoFormat": "Le logo doit être une image PNG ou JPEG.",
+    "logoTooLarge": "Le logo doit faire moins de 2 Mo."
   }
 }

@@ -3,6 +3,8 @@ export type TournamentType = 'regional' | 'national' | 'open' | 'club';
 export type TournamentFormat = 'single' | 'double' | 'triple';
 export type PairingMethod = 'swiss' | 'swissHotel' | 'roundRobin' | 'poolPlay' | 'panache';
 export type BracketSize = 4 | 8 | 16 | 32;
+/** Page size every PDF for this tournament is laid out for. */
+export type PaperSize = 'letter' | 'tabloid' | 'a4' | 'a3';
 
 export interface Tournament {
   id: string;
@@ -22,6 +24,9 @@ export interface Tournament {
   bracketSize: BracketSize;
   pairingMethod: PairingMethod;
   regionAvoidance: boolean;
+  paperSize: PaperSize;
+  /** Data URI of the tournament logo, printed top-right on every PDF. */
+  logo: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +53,8 @@ export interface Team {
   club: string | null;
   /** Panache only: an expert the draw keeps off the same team as other champions. */
   isChampion: boolean;
+  /** Pulled out mid-tournament: still listed and still holding past results, but skipped by every later draw. */
+  isWithdrawn: boolean;
   createdAt: string;
 }
 
@@ -121,6 +128,8 @@ export interface BracketMatch {
   winnerId: string | null;
   nextMatchId: string | null;
   isBye: boolean;
+  /** The court was set by hand, so the automatic renumbering leaves it alone. */
+  courtIsManual: boolean;
 }
 
 export interface PairingHistory {
@@ -158,6 +167,8 @@ export interface TournamentFormData {
   bracketSize: number;
   pairingMethod: PairingMethod;
   regionAvoidance: boolean;
+  paperSize: PaperSize;
+  logo: string | null;
 }
 
 export interface TeamFormData {
@@ -168,6 +179,7 @@ export interface TeamFormData {
   region: string;
   club: string;
   isChampion: boolean;
+  isWithdrawn: boolean;
 }
 
 // CSV Import

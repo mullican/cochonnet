@@ -1,6 +1,7 @@
 use crate::db::Database;
 use crate::models::{QualifyingRound, Team};
 use chrono::Utc;
+use super::courts;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rusqlite::params;
@@ -414,9 +415,10 @@ fn load_players(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club,
+                   is_champion, is_withdrawn, created_at
             FROM teams
-            WHERE tournament_id = ?1
+            WHERE tournament_id = ?1 AND is_withdrawn = 0
             ORDER BY team_number ASC
             "#,
         )
@@ -434,7 +436,8 @@ fn load_players(
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -611,10 +614,33 @@ fn persist_round(
         side_ids.push(side_id);
     }
 
-    // Games. Court number follows the game's position, matching the other formats.
+    // Courts are drawn against what each player has already had, the same way
+    // the team formats do it. Identity here is the person: the team they were
+    // shuffled into is gone by the next round, their court history is not.
+    let sides: Vec<Vec<String>> = round
+        .games
+        .iter()
+        .map(|&(t1, t2)| {
+            round.teams[t1]
+                .iter()
+                .chain(round.teams[t2].iter())
+                .map(|&p| players[p].id.clone())
+                .collect()
+        })
+        .collect();
+    let number_of_courts: i32 = conn
+        .query_row(
+            "SELECT number_of_courts FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let court_history = courts::load_qualifying_history(conn, tournament_id)?;
+    let assigned = courts::assign_courts(&sides, &court_history, number_of_courts);
+
     for (game_idx, &(t1, t2)) in round.games.iter().enumerate() {
         let game_id = Uuid::new_v4().to_string();
-        let court = (game_idx as i32) + 1;
+        let court = assigned[game_idx];
 
         conn.execute(
             r#"
@@ -795,6 +821,83 @@ pub fn generate_panache_rounds(
     }
 
     Ok(rounds)
+}
+
+/// Draws the next round only, holding everything already drawn fixed.
+///
+/// The counterpart to drawing the whole schedule up front: a director who
+/// expects the roster to move - a withdrawal, a late arrival - draws one round
+/// at a time so each draw sees the players who are actually still in.
+#[tauri::command]
+pub fn generate_panache_round(
+    db: State<Database>,
+    tournament_id: String,
+) -> Result<QualifyingRound, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let config = load_config(&conn, &tournament_id)?;
+
+    let finals: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM qualifying_rounds WHERE tournament_id = ?1 AND is_final = 1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if finals > 0 {
+        return Err("The final has been drawn; no further qualifying rounds can be added.".to_string());
+    }
+
+    let highest: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(round_number), 0) FROM qualifying_rounds WHERE tournament_id = ?1",
+            params![tournament_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if highest >= config.number_of_rounds {
+        return Err(format!(
+            "This tournament is configured for {} qualifying rounds.",
+            config.number_of_rounds
+        ));
+    }
+
+    // The round before this one has to be scored: drawing one at a time is only
+    // worth doing if each draw sees the state the previous round left behind.
+    if highest > 0 {
+        let prior_complete: bool = conn
+            .query_row(
+                "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
+                params![tournament_id, highest],
+                |row| Ok(row.get::<_, i32>(0)? != 0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !prior_complete {
+            return Err("Previous round must be completed before generating the next round.".to_string());
+        }
+    }
+
+    let players = load_players(&conn, &tournament_id)?;
+    if players.is_empty() {
+        return Err("No players registered for this tournament".to_string());
+    }
+    let index_of = index_map(&players);
+
+    // Rounds already drawn are handed to the solver as fixed, so teammate and
+    // opponent repeats are still counted against the new round. A player who has
+    // withdrawn since is simply absent from `index_of`, and the rounds they
+    // appeared in load without them.
+    let fixed = load_existing_rounds(&conn, &tournament_id, highest + 1, &index_of)?;
+
+    let flags = champion_flags(&players);
+    let schedule = solve_panache_schedule(players.len(), &flags, config.team_size, 1, &fixed)?;
+
+    let round = schedule
+        .rounds
+        .first()
+        .ok_or_else(|| "The draw produced no round.".to_string())?;
+
+    persist_round(&conn, &tournament_id, highest + 1, false, round, &players)
 }
 
 /// Re-shuffles every round from `from_round_number` on, holding earlier rounds fixed.
@@ -989,7 +1092,7 @@ pub fn get_sitouts_for_round(
         .prepare(
             r#"
             SELECT t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3,
-                   t.region, t.club, t.is_champion, t.created_at
+                   t.region, t.club, t.is_champion, t.is_withdrawn, t.created_at
             FROM panache_sitouts ps
             JOIN teams t ON t.id = ps.team_id
             WHERE ps.round_id = ?1
@@ -1010,7 +1113,8 @@ pub fn get_sitouts_for_round(
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1018,6 +1122,26 @@ pub fn get_sitouts_for_round(
         .map_err(|e| e.to_string())?;
 
     Ok(sitouts)
+}
+
+/// Marks an entrant as having pulled out, or puts them back in.
+///
+/// Withdrawing is not deleting: the games they have already played stand, and
+/// their opponents' Buchholz still counts them. They are simply left out of
+/// every draw from here on.
+#[tauri::command]
+pub fn set_team_withdrawn(
+    db: State<Database>,
+    team_id: String,
+    is_withdrawn: bool,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE teams SET is_withdrawn = ?2 WHERE id = ?1",
+        params![team_id, if is_withdrawn { 1 } else { 0 }],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

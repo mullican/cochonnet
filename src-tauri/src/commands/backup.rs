@@ -121,7 +121,7 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
             SELECT id, name, team_composition, tournament_type, start_date, end_date, director,
                    head_umpire, format, number_of_courts, number_of_qualifying_rounds,
                    has_consolante, advance_all, advance_count, bracket_size, pairing_method,
-                   region_avoidance, created_at, updated_at
+                   region_avoidance, paper_size, logo, created_at, updated_at
             FROM tournaments WHERE id = ?1
             "#,
             params![tournament_id],
@@ -144,8 +144,10 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
                     bracket_size: row.get(14)?,
                     pairing_method: row.get(15)?,
                     region_avoidance: row.get::<_, i32>(16)? != 0,
-                    created_at: row.get(17)?,
-                    updated_at: row.get(18)?,
+                    paper_size: row.get(17)?,
+                    logo: row.get(18)?,
+                    created_at: row.get(19)?,
+                    updated_at: row.get(20)?,
                 })
             },
         )
@@ -174,7 +176,7 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
 
     let teams = rows!(
         "SELECT id, tournament_id, team_number, captain, player2, player3, region, club, \
-         is_champion, created_at FROM teams WHERE tournament_id = ?1",
+         is_champion, is_withdrawn, created_at FROM teams WHERE tournament_id = ?1",
         |row| Ok(Team {
             id: row.get(0)?,
             tournament_id: row.get(1)?,
@@ -185,7 +187,8 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
             region: row.get(6)?,
             club: row.get(7)?,
             is_champion: row.get::<_, i32>(8)? != 0,
-            created_at: row.get(9)?,
+            is_withdrawn: row.get::<_, i32>(9)? != 0,
+            created_at: row.get(10)?,
         })
     );
 
@@ -258,8 +261,8 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
 
     let bracket_matches = rows!(
         "SELECT m.id, m.bracket_id, m.round_number, m.match_number, m.court_number, m.team1_id, \
-         m.team2_id, m.team1_score, m.team2_score, m.winner_id, m.next_match_id, m.is_bye \
-         FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id \
+         m.team2_id, m.team1_score, m.team2_score, m.winner_id, m.next_match_id, m.is_bye, \
+         m.court_is_manual FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id \
          WHERE b.tournament_id = ?1",
         |row| Ok(BracketMatch {
             id: row.get(0)?,
@@ -274,6 +277,7 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
             winner_id: row.get(9)?,
             next_match_id: row.get(10)?,
             is_bye: row.get::<_, i32>(11)? != 0,
+            court_is_manual: row.get::<_, i32>(12)? != 0,
         })
     );
 
@@ -419,14 +423,15 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
         INSERT INTO tournaments (id, name, team_composition, tournament_type, start_date, end_date,
             director, head_umpire, format, day_type, number_of_courts, number_of_qualifying_rounds,
             has_consolante, advance_all, advance_count, bracket_size, pairing_method,
-            region_avoidance, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            region_avoidance, paper_size, logo, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         "#,
         params![
             tournament_id, t.name, t.team_composition, t.tournament_type, t.start_date, t.end_date,
             t.director, t.head_umpire, t.format, t.number_of_courts, t.number_of_qualifying_rounds,
             t.has_consolante as i32, t.advance_all as i32, t.advance_count, t.bracket_size,
-            t.pairing_method, t.region_avoidance as i32, t.created_at, Utc::now().to_rfc3339(),
+            t.pairing_method, t.region_avoidance as i32, t.paper_size, t.logo,
+            t.created_at, Utc::now().to_rfc3339(),
         ],
     )
     .map_err(|e| format!("Could not restore the tournament: {}", e))?;
@@ -443,12 +448,13 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
         tx.execute(
             r#"
             INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region,
-                club, is_champion, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                club, is_champion, is_withdrawn, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 teams[&team.id], tournament_id, team.team_number, team.captain, team.player2,
-                team.player3, team.region, team.club, team.is_champion as i32, team.created_at,
+                team.player3, team.region, team.club, team.is_champion as i32,
+                team.is_withdrawn as i32, team.created_at,
             ],
         )
         .map_err(|e| format!("Could not restore team {}: {}", team.team_number, e))?;
@@ -567,8 +573,9 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
         tx.execute(
             r#"
             INSERT INTO bracket_matches (id, bracket_id, round_number, match_number, court_number,
-                team1_id, team2_id, team1_score, team2_score, winner_id, next_match_id, is_bye)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                team1_id, team2_id, team1_score, team2_score, winner_id, next_match_id, is_bye,
+                court_is_manual)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
             params![
                 matches[&m.id],
@@ -583,6 +590,7 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
                 remap_opt(&teams, &m.winner_id),
                 remap_opt(&matches, &m.next_match_id),
                 m.is_bye as i32,
+                m.court_is_manual as i32,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -782,6 +790,91 @@ mod tests {
     }
 
     /// A file from the older, thinner backup must still restore.
+    /// Every column added to `tournaments`, `teams` or `bracket_matches` has to
+    /// be added to four places in this file - the export SELECT, the export row
+    /// mapping, the restore INSERT and its params - and nothing but this test
+    /// notices when one is missed. A backup that silently drops the logo or the
+    /// withdrawal flags is a backup that quietly loses the tournament.
+    #[test]
+    fn a_backup_carries_the_settings_and_flags_that_were_added_later() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed(&conn);
+
+        conn.execute(
+            "UPDATE tournaments SET paper_size = 'a3', logo = 'data:image/png;base64,AAAA' WHERE id = 't1'",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE teams SET is_withdrawn = 1 WHERE id = 'b'", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE bracket_matches SET court_is_manual = 1 WHERE id = 'm1'",
+            [],
+        )
+        .unwrap();
+
+        let backup = collect_backup(&conn, "t1").unwrap();
+
+        // In the struct the export is built from...
+        assert_eq!(backup.tournament.paper_size, "a3");
+        assert_eq!(
+            backup.tournament.logo.as_deref(),
+            Some("data:image/png;base64,AAAA")
+        );
+        let withdrawn: Vec<&str> = backup
+            .teams
+            .iter()
+            .filter(|t| t.is_withdrawn)
+            .map(|t| t.captain.as_str())
+            .collect();
+        assert_eq!(withdrawn, vec!["Bob"]);
+
+        // ...and in the JSON that actually lands in the file, under the camelCase
+        // names the frontend and any older build would look for.
+        let json = serde_json::to_value(&backup).unwrap();
+        assert_eq!(json["tournament"]["paperSize"], "a3");
+        assert_eq!(json["tournament"]["logo"], "data:image/png;base64,AAAA");
+        assert_eq!(json["teams"][1]["isWithdrawn"], true);
+        assert_eq!(json["teams"][0]["isWithdrawn"], false);
+        assert_eq!(json["bracketMatches"][0]["courtIsManual"], true);
+
+        // Printed so the shape of the file is inspectable: `cargo test
+        // a_backup_carries -- --nocapture`.
+        println!("tournament: {}", serde_json::to_string_pretty(&json["tournament"]).unwrap());
+        println!("teams: {}", serde_json::to_string_pretty(&json["teams"]).unwrap());
+
+        // And it all survives a round trip back into a fresh tournament.
+        let restored_id = restore_backup(&conn, &backup).unwrap();
+        let (paper, logo): (String, Option<String>) = conn
+            .query_row(
+                "SELECT paper_size, logo FROM tournaments WHERE id = ?1",
+                params![restored_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(paper, "a3");
+        assert_eq!(logo.as_deref(), Some("data:image/png;base64,AAAA"));
+
+        let manual: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id
+                 WHERE b.tournament_id = ?1 AND m.court_is_manual = 1",
+                params![restored_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(manual, 1);
+
+        let still_withdrawn: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1 AND is_withdrawn = 1",
+                params![restored_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_withdrawn, 1);
+    }
+
     #[test]
     fn a_backup_missing_the_newer_sections_still_restores() {
         let conn = Connection::open_in_memory().unwrap();
@@ -795,18 +888,37 @@ mod tests {
                 "advanceCount": null, "bracketSize": 8, "pairingMethod": "swiss",
                 "regionAvoidance": false, "createdAt": "now", "updatedAt": "now"
             },
-            "teams": []
+            "teams": [
+                {
+                    "id": "t1", "tournamentId": "old", "teamNumber": 1, "captain": "A",
+                    "player2": "B", "player3": null, "region": null, "club": null,
+                    "isChampion": false, "createdAt": "now"
+                }
+            ]
         }"#;
         let backup: TournamentBackup = serde_json::from_str(json).unwrap();
         let new_id = restore_backup(&conn, &backup).unwrap();
 
-        let name: String = conn
+        let (name, paper_size, logo): (String, String, Option<String>) = conn
             .query_row(
-                "SELECT name FROM tournaments WHERE id = ?1",
+                "SELECT name, paper_size, logo FROM tournaments WHERE id = ?1",
+                params![new_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Legacy");
+        // Fields added after the file was written have to fall back rather than
+        // fail the whole import.
+        assert_eq!(paper_size, "letter");
+        assert_eq!(logo, None);
+
+        let withdrawn: i32 = conn
+            .query_row(
+                "SELECT is_withdrawn FROM teams WHERE tournament_id = ?1",
                 params![new_id],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(name, "Legacy");
+        assert_eq!(withdrawn, 0);
     }
 }

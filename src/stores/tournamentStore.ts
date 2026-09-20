@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import type { Tournament, Team, QualifyingRound, GameWithTeams, TeamStanding, Bracket, BracketMatch } from '../types';
+import type { Tournament, Umpire, Team, QualifyingRound, GameWithTeams, TeamStanding, Bracket, BracketMatch } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 interface TournamentState {
   tournaments: Tournament[];
   currentTournament: Tournament | null;
+  /** The additional umpires of the tournament being viewed or edited. */
+  umpires: Umpire[];
   teams: Team[];
   qualifyingRounds: QualifyingRound[];
   qualifyingGames: GameWithTeams[];
@@ -19,6 +21,7 @@ interface TournamentState {
   // Tournament actions
   fetchTournaments: () => Promise<void>;
   fetchTournament: (id: string) => Promise<void>;
+  fetchUmpires: (tournamentId: string) => Promise<void>;
   createTournament: (data: Partial<Tournament>) => Promise<Tournament>;
   updateTournament: (id: string, data: Partial<Tournament>) => Promise<void>;
   deleteTournament: (id: string) => Promise<void>;
@@ -39,14 +42,17 @@ interface TournamentState {
   deleteAllQualifyingRounds: (tournamentId: string) => Promise<void>;
   fetchGamesForRound: (roundId: string) => Promise<void>;
   updateGameScore: (gameId: string, team1Score: number, team2Score: number) => Promise<void>;
+  updateGameCourt: (gameId: string, courtNumber: number) => Promise<void>;
   completeRound: (roundId: string) => Promise<void>;
 
   // Panache actions
   generatePanacheRounds: (tournamentId: string) => Promise<QualifyingRound[]>;
+  generatePanacheRound: (tournamentId: string) => Promise<QualifyingRound>;
   redrawPanacheRounds: (tournamentId: string, fromRoundNumber: number) => Promise<QualifyingRound[]>;
   generatePanacheFinal: (tournamentId: string) => Promise<QualifyingRound>;
   fetchSitoutsForRound: (roundId: string) => Promise<void>;
   setTeamChampion: (teamId: string, isChampion: boolean) => Promise<void>;
+  setTeamWithdrawn: (teamId: string, isWithdrawn: boolean) => Promise<void>;
 
   // Standings actions
   fetchStandings: (tournamentId: string) => Promise<void>;
@@ -56,6 +62,7 @@ interface TournamentState {
   generateBrackets: (tournamentId: string) => Promise<void>;
   fetchMatchesForBracket: (bracketId: string) => Promise<void>;
   updateMatchScore: (matchId: string, team1Score: number, team2Score: number) => Promise<void>;
+  updateMatchCourt: (matchId: string, courtNumber: number) => Promise<void>;
 
   // Utility
   clearError: () => void;
@@ -64,6 +71,7 @@ interface TournamentState {
 export const useTournamentStore = create<TournamentState>((set, get) => ({
   tournaments: [],
   currentTournament: null,
+  umpires: [],
   teams: [],
   qualifyingRounds: [],
   qualifyingGames: [],
@@ -92,6 +100,15 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
       set({ currentTournament: tournament, loading: false });
     } catch (error) {
       set({ error: String(error), loading: false });
+    }
+  },
+
+  fetchUmpires: async (tournamentId: string) => {
+    try {
+      const umpires = await invoke<Umpire[]>('get_umpires', { tournamentId });
+      set({ umpires });
+    } catch (error) {
+      set({ error: String(error) });
     }
   },
 
@@ -318,6 +335,21 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
     }
   },
 
+  updateGameCourt: async (gameId: string, courtNumber: number) => {
+    set({ error: null });
+    try {
+      await invoke('update_game_court', { gameId, courtNumber });
+      set((state) => ({
+        qualifyingGames: state.qualifyingGames.map((g) =>
+          g.id === gameId ? { ...g, courtNumber } : g
+        ),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+
   completeRound: async (roundId: string) => {
     set({ loading: true, error: null });
     try {
@@ -346,6 +378,23 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
         loading: false,
       }));
       return rounds;
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  generatePanacheRound: async (tournamentId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const round = await invoke<QualifyingRound>('generate_panache_round', {
+        tournamentId,
+      });
+      set((state) => ({
+        qualifyingRounds: [...state.qualifyingRounds, round],
+        loading: false,
+      }));
+      return round;
     } catch (error) {
       set({ error: String(error), loading: false });
       throw error;
@@ -408,6 +457,19 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
       await invoke('set_team_champion', { teamId, isChampion });
       set((state) => ({
         teams: state.teams.map((t) => (t.id === teamId ? { ...t, isChampion } : t)),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+
+  setTeamWithdrawn: async (teamId: string, isWithdrawn: boolean) => {
+    set({ error: null });
+    try {
+      await invoke('set_team_withdrawn', { teamId, isWithdrawn });
+      set((state) => ({
+        teams: state.teams.map((t) => (t.id === teamId ? { ...t, isWithdrawn } : t)),
       }));
     } catch (error) {
       set({ error: String(error) });
@@ -491,6 +553,21 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
       }
     } catch (error) {
       set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  updateMatchCourt: async (matchId: string, courtNumber: number) => {
+    set({ error: null });
+    try {
+      await invoke('update_match_court', { matchId, courtNumber });
+      set((state) => ({
+        bracketMatches: state.bracketMatches.map((m) =>
+          m.id === matchId ? { ...m, courtNumber, courtIsManual: true } : m
+        ),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
       throw error;
     }
   },

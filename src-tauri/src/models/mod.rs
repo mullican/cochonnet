@@ -21,8 +21,20 @@ pub struct Tournament {
     pub bracket_size: i32,
     pub pairing_method: String,
     pub region_avoidance: bool,
+    /// Page size every PDF is laid out for: letter, tabloid, a4 or a3.
+    /// Defaulted so a backup written before the field existed still restores.
+    #[serde(default = "default_paper_size")]
+    pub paper_size: String,
+    /// Optional tournament logo as a data URI, printed top-right on every PDF.
+    #[serde(default)]
+    pub logo: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Letter, not A4: the clubs running this print on US paper.
+fn default_paper_size() -> String {
+    "letter".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +58,10 @@ pub struct CreateTournamentData {
     pub bracket_size: i32,
     pub pairing_method: String,
     pub region_avoidance: bool,
+    #[serde(default = "default_paper_size")]
+    pub paper_size: String,
+    #[serde(default)]
+    pub logo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +85,10 @@ pub struct Team {
     pub club: Option<String>,
     /// Panache only: an expert the draw keeps off the same team as other champions.
     pub is_champion: bool,
+    /// Pulled out mid-tournament: kept for the games already played, skipped by
+    /// every draw from here on. Defaulted so older backups still restore.
+    #[serde(default)]
+    pub is_withdrawn: bool,
     pub created_at: String,
 }
 
@@ -84,6 +104,8 @@ pub struct CreateTeamData {
     pub club: Option<String>,
     /// None means "leave as-is" on update, and "not a champion" on create.
     pub is_champion: Option<bool>,
+    /// None means "leave as-is" on update, and "still playing" on create.
+    pub is_withdrawn: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +209,9 @@ pub struct BracketMatch {
     pub winner_id: Option<String>,
     pub next_match_id: Option<String>,
     pub is_bye: bool,
+    /// The court was set by hand, so the automatic renumbering leaves it alone.
+    #[serde(default)]
+    pub court_is_manual: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +229,8 @@ pub struct MatchWithTeams {
     pub winner_id: Option<String>,
     pub next_match_id: Option<String>,
     pub is_bye: bool,
+    #[serde(default)]
+    pub court_is_manual: bool,
     pub team1: Option<Team>,
     pub team2: Option<Team>,
     pub winner: Option<Team>,

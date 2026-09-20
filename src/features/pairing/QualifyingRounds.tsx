@@ -32,6 +32,7 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     generateAllQualifyingRounds,
     generatePairings,
     generatePanacheRounds,
+    generatePanacheRound,
     redrawPanacheRounds,
     generatePanacheFinal,
     deleteAllQualifyingRounds,
@@ -58,23 +59,31 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   }, [qualifyingRounds, selectedRoundId]);
 
+  const pairingMethod = currentTournament?.pairingMethod || 'swiss';
+  const isPanache = pairingMethod === 'panache';
+
   const handleGenerateAllRounds = async () => {
+    setActionError(null);
     try {
       const rounds = await generateAllQualifyingRounds(tournamentId);
       if (rounds.length > 0) {
         setSelectedRoundId(rounds[0].id);
       }
     } catch (error) {
-      console.error('Failed to generate pairings:', error);
+      setActionError(String(error));
     }
   };
 
+  // Panache draws through its own scheduler; every other format shares one.
   const handleGenerateNextRound = async () => {
+    setActionError(null);
     try {
-      const round = await generatePairings(tournamentId);
+      const round = isPanache
+        ? await generatePanacheRound(tournamentId)
+        : await generatePairings(tournamentId);
       setSelectedRoundId(round.id);
     } catch (error) {
-      console.error('Failed to generate next round:', error);
+      setActionError(String(error));
     }
   };
 
@@ -124,13 +133,13 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   };
 
-  const pairingMethod = currentTournament?.pairingMethod || 'swiss';
-  const isPanache = pairingMethod === 'panache';
-
   // Panache needs enough individuals to fill both sides of one game.
   const panacheTeamSize = currentTournament?.format === 'triple' ? 3 : 2;
   const minimumEntrants = isPanache ? panacheTeamSize * 2 : 2;
-  const canGeneratePairings = teams.length >= minimumEntrants;
+  // Withdrawn entrants are not going on a court again, so they do not count
+  // towards a draw: what matters is who is still in.
+  const activeTeams = teams.filter((team) => !team.isWithdrawn);
+  const canGeneratePairings = activeTeams.length >= minimumEntrants;
   const hasRounds = qualifyingRounds.length > 0;
 
   // Check if any games have scores - if so, deletion is not allowed
@@ -139,28 +148,32 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   );
   const canDeleteRounds = hasRounds && !hasScores;
 
-  // For Swiss and Pool Play: can generate next round if prior round is complete
-  const lastRound = qualifyingRounds[qualifyingRounds.length - 1];
-  const maxRounds = pairingMethod === 'poolPlay' ? 3 : (currentTournament?.numberOfQualifyingRounds || 5);
+  // Swiss and Pool Play build each round from the last one's results, so they
+  // cannot be drawn ahead. The rest can be drawn either way: up front, which is
+  // what these formats are usually chosen for, or a round at a time, which is
+  // what a director does when the roster may still move.
   const requiresRoundByRound = pairingMethod === 'swiss' || pairingMethod === 'poolPlay';
 
-  const canGenerateNextRound = requiresRoundByRound &&
-    canGeneratePairings &&
-    (!lastRound || lastRound.isComplete) &&
-    qualifyingRounds.length < maxRounds;
-
-  // Panache draws the whole schedule at once, then a single final game once every
-  // qualifying round has been scored.
+  // Panache ends with a single final game once every qualifying round is scored.
   const qualifyingOnlyRounds = qualifyingRounds.filter((r) => !r.isFinal);
   const hasFinal = qualifyingRounds.some((r) => r.isFinal);
   const allQualifyingComplete =
     qualifyingOnlyRounds.length > 0 && qualifyingOnlyRounds.every((r) => r.isComplete);
 
+  const lastRound = qualifyingOnlyRounds[qualifyingOnlyRounds.length - 1];
+  const maxRounds = pairingMethod === 'poolPlay' ? 3 : (currentTournament?.numberOfQualifyingRounds || 5);
+
+  const canGenerateNextRound =
+    canGeneratePairings &&
+    !hasFinal &&
+    (!lastRound || lastRound.isComplete) &&
+    qualifyingOnlyRounds.length < maxRounds;
+
   const selectedRound = qualifyingRounds.find((r) => r.id === selectedRoundId) || null;
 
   // Determine which generate button to show
   const showGenerateAllButton = !hasRounds && !requiresRoundByRound && !isPanache;
-  const showGenerateNextButton = requiresRoundByRound && canGenerateNextRound;
+  const showGenerateNextButton = canGenerateNextRound;
   const showGeneratePanacheButton = isPanache && !hasRounds;
   const showGenerateFinalButton = isPanache && allQualifyingComplete && !hasFinal;
 
@@ -188,6 +201,10 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
           )}
           {showGenerateNextButton && (
             <Button
+              // Drawing the whole schedule is the usual choice for the formats
+              // that offer it, so one round at a time sits beside it as the
+              // alternative rather than competing with it.
+              variant={showGenerateAllButton || showGeneratePanacheButton ? 'secondary' : 'primary'}
               onClick={handleGenerateNextRound}
               disabled={loading}
             >

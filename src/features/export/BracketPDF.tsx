@@ -2,6 +2,7 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
 import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
+import { pageProps, contentSize, PdfLogo, LOGO_BOX_COMPACT } from './pdfPage';
 
 // Compact dimensions for fitting a bracket on one page
 const MATCH_HEIGHT = 24;
@@ -9,31 +10,38 @@ const ROUND_GAP = 25;
 const LINE_LENGTH = 12; // Horizontal line from match to vertical
 const COURT_WIDTH = 24; // The court cell at the left of every match
 
-// A4 landscape is 842 wide; the page padding takes 15 off each side.
-const CONTENT_WIDTH = 842 - 15 * 2;
+const PAGE_PADDING = 15;
 const MAX_MATCH_WIDTH = 150;
 const MIN_MATCH_WIDTH = 70;
+
+// What the header and the round labels take off the top before the bracket
+// starts: ~35 for the header, ~15 for the labels, and some slack so a bracket
+// sized to the rest can never spill off the bottom.
+const VERTICAL_RESERVE = 65;
 
 /**
  * How wide each match box can be for a bracket of this depth.
  *
  * Every round is one column, so the deeper the bracket the less room each box
  * gets. Sizing to fit rather than using one fixed width is what pays for the
- * court cell without shrinking any text.
+ * court cell without shrinking any text - and it is why a deep bracket is worth
+ * printing on larger paper: the columns stop being squeezed to the minimum.
  */
-function matchWidthFor(numRounds: number): number {
-  const fitted = Math.floor((CONTENT_WIDTH - (numRounds - 1) * ROUND_GAP) / numRounds);
+function matchWidthFor(numRounds: number, contentWidth: number): number {
+  const fitted = Math.floor((contentWidth - (numRounds - 1) * ROUND_GAP) / numRounds);
   return Math.max(MIN_MATCH_WIDTH, Math.min(MAX_MATCH_WIDTH, fitted));
 }
 
 const styles = StyleSheet.create({
   page: {
-    padding: 15,
+    padding: PAGE_PADDING,
     fontSize: 8,
     fontFamily: 'Helvetica',
   },
   header: {
     marginBottom: 8,
+    // Keeps the title clear of the logo box in the top-right corner.
+    paddingRight: LOGO_BOX_COMPACT.width + 8,
   },
   title: {
     fontSize: 12,
@@ -232,6 +240,10 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
     </View>
   );
 
+  // Everything below is laid out by hand, so it has to know how big the page
+  // the operator picked actually is.
+  const content = contentSize(tournament, 'landscape', PAGE_PADDING);
+
   // A bracket needs at least two entrants to have a single match, and a
   // Document with no Page at all produces a zero-page PDF - a file that some
   // viewers refuse to open and that a printer has nothing to do with. Both
@@ -243,8 +255,9 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
   if (drawable.length === 0) {
     return (
       <Document>
-        <Page size="A4" orientation="landscape" style={styles.page}>
+        <Page {...pageProps(tournament, 'landscape')} style={styles.page}>
           <View style={styles.header}>
+            <PdfLogo tournament={tournament} box={LOGO_BOX_COMPACT} />
             <Text style={styles.title}>{tournament.name}</Text>
             <Text style={styles.subtitle}>{t.nothingToShow}</Text>
           </View>
@@ -259,21 +272,24 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
         const bracketMatches = getMatchesForBracket(bracket.id);
         const numRounds = Math.log2(bracket.size);
         const firstRoundMatchCount = bracket.size / 2;
-        const matchWidth = matchWidthFor(numRounds);
+        const matchWidth = matchWidthFor(numRounds, content.width);
 
-        // Calculate vertical spacing - total height available for matches
-        // A4 landscape: 842 x 595, with padding (15) we have about 812 x 565
-        // Reserve ~35 for header + ~15 for round labels = ~50, leaves ~515 for bracket
-        // Use 500 to ensure no overflow
-        const availableHeight = 500;
+        // Vertical spacing: whatever the chosen paper leaves once the header
+        // and the round labels have taken their share.
+        const availableHeight = content.height - VERTICAL_RESERVE;
         const matchSpacingRound1 = availableHeight / firstRoundMatchCount;
 
         return (
-          <Page key={bracket.id} size="A4" orientation="landscape" style={styles.page}>
+          <Page key={bracket.id} {...pageProps(tournament, 'landscape')} style={styles.page}>
             <View style={styles.header}>
+              <PdfLogo tournament={tournament} box={LOGO_BOX_COMPACT} />
               <Text style={styles.title}>{tournament.name}</Text>
               <Text style={styles.subtitle}>
-                {bracket.isConsolante ? t.consolante : t.concours} {bracket.name} | {formatDate(tournament.startDate)} | {t.courtLegend}
+                {/* With every team seeded into a bracket there is no losers'
+                    draw to speak of - each bracket is a concours in its own
+                    right - so the consolante keeps its name but loses the label. */}
+                {bracket.isConsolante && !tournament.advanceAll ? t.consolante : t.concours}{' '}
+                {bracket.name} | {formatDate(tournament.startDate)} | {t.courtLegend}
               </Text>
             </View>
 

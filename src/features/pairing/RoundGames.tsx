@@ -23,20 +23,26 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     teams,
     fetchGamesForRound,
     updateGameScore,
+    updateGameCourt,
     completeRound,
     fetchStandings,
     fetchQualifyingRounds,
     qualifyingSitouts,
     fetchSitoutsForRound,
+    currentTournament,
   } = useTournamentStore();
 
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
+  const [courtDrafts, setCourtDrafts] = useState<Record<string, string>>({});
+  const [courtSaveError, setCourtSaveError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     // Reset scores when switching rounds
     setScores({});
+    setCourtDrafts({});
+    setCourtSaveError(null);
     setSearch('');
     setInitialLoading(true);
     fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
@@ -123,6 +129,87 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       [team.captain, team.player2, team.player3]
         .some((name) => (name || '').toLowerCase().includes(needle))
     );
+  };
+
+  const courtCount = currentTournament?.numberOfCourts ?? 0;
+
+  /**
+   * A court can only be moved before the game is played. Once a score is in -
+   * or the round is closed, which is what settles a bye - the court is a record
+   * of where the game happened, not a plan for where it will.
+   */
+  const courtLocked = (game: GameWithTeams) =>
+    isComplete || game.team1Score !== null || game.team2Score !== null;
+
+  /**
+   * What the court box shows: the operator's unsaved text if they are typing,
+   * otherwise whatever is on the game.
+   */
+  const courtValue = (game: GameWithTeams) =>
+    courtDrafts[game.id] ?? String(game.courtNumber);
+
+  /**
+   * Courts holding more than one game this round.
+   *
+   * Moving games around means passing through states where two share a court,
+   * so this is shown rather than prevented - the director may well be halfway
+   * through a shuffle.
+   */
+  const clashingCourts = new Set(
+    Object.entries(
+      qualifyingGames.reduce<Record<number, number>>((counts, game) => {
+        counts[game.courtNumber] = (counts[game.courtNumber] || 0) + 1;
+        return counts;
+      }, {})
+    )
+      .filter(([, count]) => count > 1)
+      .map(([court]) => Number(court))
+  );
+
+  const courtError = (game: GameWithTeams): string | undefined => {
+    if (clashingCourts.has(game.courtNumber)) return t('pairing.courtClash');
+    // The court count can be lowered after a schedule is drawn, which leaves
+    // perfectly valid assignments pointing at courts the venue no longer has.
+    if (courtCount > 0 && (game.courtNumber < 1 || game.courtNumber > courtCount)) {
+      return t('pairing.courtOutOfRange', { count: courtCount });
+    }
+    return undefined;
+  };
+
+  const handleCourtChange = (gameId: string, value: string) => {
+    setCourtDrafts((prev) => ({ ...prev, [gameId]: value }));
+  };
+
+  const handleSaveCourt = async (game: GameWithTeams) => {
+    const draft = courtDrafts[game.id];
+    if (draft === undefined || courtLocked(game)) return;
+
+    const court = parseInt(draft, 10);
+    if (isNaN(court) || court < 1) {
+      // Nonsense reverts rather than being written; an empty box is a slip.
+      setCourtDrafts((prev) => {
+        const { [game.id]: _discarded, ...rest } = prev;
+        return rest;
+      });
+      return;
+    }
+
+    if (court !== game.courtNumber) {
+      try {
+        await updateGameCourt(game.id, court);
+      } catch (error) {
+        // A court that did not save has to say so. Leaving the draft in the
+        // box keeps what the operator typed in front of them rather than
+        // snapping back to the old number as though nothing happened.
+        setCourtSaveError(String(error));
+        return;
+      }
+    }
+    setCourtSaveError(null);
+    setCourtDrafts((prev) => {
+      const { [game.id]: _saved, ...rest } = prev;
+      return rest;
+    });
   };
 
   const query = search.trim();
@@ -233,6 +320,16 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
         </div>
       )}
 
+      {courtSaveError && (
+        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">{courtSaveError}</div>
+      )}
+
+      {clashingCourts.size > 0 && (
+        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
+          {t('pairing.courtClashSummary')}
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <div className="w-full max-w-xs">
           <Input
@@ -259,10 +356,45 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visibleGames.map((game) => (
-            <Card key={game.id}>
+            <Card
+              key={game.id}
+              className={courtError(game) ? 'border-red-400' : undefined}
+            >
               <CardContent className="py-4">
-                <div className="text-xs text-gray-500 mb-2">
-                  {t('pairing.court')} {game.courtNumber}
+                <div className="mb-3">
+                  {courtLocked(game) ? (
+                    <div className="text-xs text-gray-500">
+                      {t('pairing.court')} {game.courtNumber}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor={`court-${game.id}`}
+                        className="text-xs text-gray-500"
+                      >
+                        {t('pairing.court')}
+                      </label>
+                      {/* Three digits is more courts than any venue has. */}
+                      <Input
+                        id={`court-${game.id}`}
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={courtValue(game)}
+                        onChange={(e) => handleCourtChange(game.id, e.target.value)}
+                        onBlur={() => handleSaveCourt(game)}
+                        className={`w-14 px-1 text-center ${
+                          courtError(game) ? 'border-red-500 focus:border-red-500' : ''
+                        }`}
+                      />
+                    </div>
+                  )}
+                  {/* Shown, not enforced: shuffling games around means passing
+                      through a double-booking, and being blocked mid-shuffle is
+                      worse than the clash itself. */}
+                  {courtError(game) && (
+                    <p className="mt-1 text-xs text-red-600">{courtError(game)}</p>
+                  )}
                 </div>
 
                 {game.isBye ? (

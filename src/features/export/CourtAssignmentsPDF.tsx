@@ -2,6 +2,7 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, QualifyingRound, GameWithTeams } from '../../types';
 import { formatTeamLabel, formatPanacheSideLabel } from '../../lib/utils';
 import type { PDFTranslations } from './pdfTranslations';
+import { pageProps, PdfLogo, LOGO_BOX } from './pdfPage';
 
 const styles = StyleSheet.create({
   page: {
@@ -13,6 +14,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: '#000',
     paddingBottom: 8,
+    // Keeps the round title clear of the logo box in the top-right corner.
+    paddingRight: LOGO_BOX.width + 10,
   },
   tournamentName: {
     fontSize: 14,
@@ -125,8 +128,9 @@ export function CourtAssignmentsPDF({
       {sortedRounds.length === 0 && (
         // No rounds means no pages, and a zero-page PDF is a file some viewers
         // will not open and a printer cannot take.
-        <Page size="A4" style={styles.page}>
+        <Page {...pageProps(tournament)} style={styles.page}>
           <View style={styles.header}>
+            <PdfLogo tournament={tournament} />
             <Text style={styles.tournamentName}>{tournament.name}</Text>
             <Text style={styles.subtitle}>{t.nothingToShow}</Text>
           </View>
@@ -139,8 +143,9 @@ export function CourtAssignmentsPDF({
         const roundSitouts = sitouts?.[round.id] ?? [];
 
         return (
-          <Page key={round.id} size="A4" style={styles.page} wrap>
+          <Page key={round.id} {...pageProps(tournament)} style={styles.page} wrap>
             <View style={styles.header} fixed>
+              <PdfLogo tournament={tournament} />
               <Text style={styles.tournamentName}>{tournament.name}</Text>
               <Text style={styles.subtitle}>{t.courtAssignments}</Text>
               <Text style={styles.roundTitle}>

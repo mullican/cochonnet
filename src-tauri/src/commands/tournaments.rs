@@ -15,7 +15,7 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
                    director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-                   pairing_method, region_avoidance, created_at, updated_at
+                   pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
             FROM tournaments
             ORDER BY created_at DESC
             "#,
@@ -42,8 +42,10 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
                 bracket_size: row.get(14)?,
                 pairing_method: row.get(15)?,
                 region_avoidance: row.get::<_, i32>(16)? != 0,
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
+                paper_size: row.get(17)?,
+                logo: row.get(18)?,
+                created_at: row.get(19)?,
+                updated_at: row.get(20)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -63,7 +65,7 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
                    director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-                   pairing_method, region_avoidance, created_at, updated_at
+                   pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
             FROM tournaments
             WHERE id = ?1
             "#,
@@ -87,8 +89,10 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
                     bracket_size: row.get(14)?,
                     pairing_method: row.get(15)?,
                     region_avoidance: row.get::<_, i32>(16)? != 0,
-                    created_at: row.get(17)?,
-                    updated_at: row.get(18)?,
+                    paper_size: row.get(17)?,
+                    logo: row.get(18)?,
+                    created_at: row.get(19)?,
+                    updated_at: row.get(20)?,
                 })
             },
         )
@@ -113,8 +117,8 @@ pub fn create_tournament(
             id, name, team_composition, tournament_type, start_date, end_date,
             director, head_umpire, format, day_type, number_of_courts,
             number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-            pairing_method, region_avoidance, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         "#,
         params![
             id,
@@ -134,24 +138,16 @@ pub fn create_tournament(
             data.bracket_size,
             data.pairing_method,
             if data.region_avoidance { 1 } else { 0 },
+            data.paper_size,
+            data.logo,
             now,
             now,
         ],
     )
     .map_err(|e| e.to_string())?;
 
-    // Insert additional umpires if provided
-    if let Some(umpires) = data.additional_umpires {
-        for umpire_name in umpires {
-            if !umpire_name.trim().is_empty() {
-                let umpire_id = Uuid::new_v4().to_string();
-                conn.execute(
-                    "INSERT INTO umpires (id, tournament_id, name) VALUES (?1, ?2, ?3)",
-                    params![umpire_id, id, umpire_name],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
+    if let Some(umpires) = &data.additional_umpires {
+        replace_umpires(&conn, &id, umpires)?;
     }
 
     let tournament = Tournament {
@@ -172,6 +168,8 @@ pub fn create_tournament(
         bracket_size: data.bracket_size,
         pairing_method: data.pairing_method,
         region_avoidance: data.region_avoidance,
+        paper_size: data.paper_size,
+        logo: data.logo,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -223,7 +221,7 @@ pub fn update_tournament(
     // holding more teams than it could ever put on the ground.
     let registered: i32 = conn
         .query_row(
-            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1 AND is_withdrawn = 0",
             params![id],
             |row| row.get(0),
         )
@@ -267,7 +265,9 @@ pub fn update_tournament(
             bracket_size = ?15,
             pairing_method = ?16,
             region_avoidance = ?17,
-            updated_at = ?18
+            paper_size = ?18,
+            logo = ?19,
+            updated_at = ?20
         WHERE id = ?1
         "#,
         params![
@@ -288,26 +288,50 @@ pub fn update_tournament(
             data.bracket_size,
             data.pairing_method,
             if data.region_avoidance { 1 } else { 0 },
+            data.paper_size,
+            data.logo,
             now,
         ],
     )
     .map_err(|e| e.to_string())?;
 
-    // Update additional umpires
-    conn.execute("DELETE FROM umpires WHERE tournament_id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    if let Some(umpires) = &data.additional_umpires {
+        replace_umpires(&conn, &id, umpires)?;
+    }
 
-    if let Some(umpires) = data.additional_umpires {
-        for umpire_name in umpires {
-            if !umpire_name.trim().is_empty() {
-                let umpire_id = Uuid::new_v4().to_string();
-                conn.execute(
-                    "INSERT INTO umpires (id, tournament_id, name) VALUES (?1, ?2, ?3)",
-                    params![umpire_id, id, umpire_name],
-                )
-                .map_err(|e| e.to_string())?;
-            }
+    Ok(())
+}
+
+/// Sets a tournament's additional umpires to exactly this list.
+///
+/// Callers pass `None` to mean "leave them alone", the same convention
+/// `CreateTeamData` uses for its flags. That distinction is the fix for a bug
+/// worth spelling out: the delete used to run unconditionally on update, and
+/// the frontend never sent the list at all, so umpires typed into the form were
+/// dropped on the way in and then deleted by the first edit. An empty list is
+/// still a real instruction - it is how the last umpire is removed.
+fn replace_umpires(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    umpires: &[String],
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM umpires WHERE tournament_id = ?1",
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for name in umpires {
+        // Blank rows are what an operator leaves behind after clicking Add and
+        // changing their mind; they are not umpires.
+        if name.trim().is_empty() {
+            continue;
         }
+        conn.execute(
+            "INSERT INTO umpires (id, tournament_id, name) VALUES (?1, ?2, ?3)",
+            params![Uuid::new_v4().to_string(), tournament_id, name.trim()],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -344,4 +368,68 @@ pub fn get_umpires(db: State<Database>, tournament_id: String) -> Result<Vec<Ump
         .map_err(|e| e.to_string())?;
 
     Ok(umpires)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    const TID: &str = "tour";
+
+    fn seed() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            ) VALUES (
+                ?1, 'Open', 'mixed', 'club', '2026-01-01', '2026-01-02',
+                'D', 'U', 'double', 'single', 8, 5, 0, 1, NULL, 16,
+                'swiss', 0, 'now', 'now'
+            )
+            "#,
+            params![TID],
+        )
+        .unwrap();
+        conn
+    }
+
+    fn names(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM umpires WHERE tournament_id = ?1 ORDER BY name")
+            .unwrap();
+        stmt.query_map(params![TID], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn umpires_are_replaced_wholesale() {
+        let conn = seed();
+
+        replace_umpires(&conn, TID, &["Ana".into(), "Bo".into()]).unwrap();
+        assert_eq!(names(&conn), vec!["Ana", "Bo"]);
+
+        // A second call is the whole list again, not an addition.
+        replace_umpires(&conn, TID, &["Cy".into()]).unwrap();
+        assert_eq!(names(&conn), vec!["Cy"]);
+
+        // And an empty list is how the last one is removed.
+        replace_umpires(&conn, TID, &[]).unwrap();
+        assert!(names(&conn).is_empty());
+    }
+
+    /// Clicking Add and changing your mind leaves an empty row in the form.
+    #[test]
+    fn blank_rows_are_not_umpires() {
+        let conn = seed();
+        replace_umpires(&conn, TID, &["".into(), "  ".into(), " Dee ".into()]).unwrap();
+        assert_eq!(names(&conn), vec!["Dee"]);
+    }
 }

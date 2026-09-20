@@ -8,6 +8,8 @@ interface TeamFormProps {
   showPlayer3?: boolean;
   /** Panache registers individuals: one name, no partners, plus a champion flag. */
   isPanache?: boolean;
+  /** Only offered when editing: there is nothing to withdraw from on the way in. */
+  showWithdrawn?: boolean;
   onSubmit: (data: TeamFormData) => void;
   onCancel: () => void;
 }
@@ -16,6 +18,7 @@ export function TeamForm({
   defaultValues,
   showPlayer3 = true,
   isPanache = false,
+  showWithdrawn = false,
   onSubmit,
   onCancel,
 }: TeamFormProps) {
@@ -34,6 +37,7 @@ export function TeamForm({
       region: '',
       club: '',
       isChampion: false,
+      isWithdrawn: false,
       ...defaultValues,
     },
   });
@@ -109,6 +113,21 @@ export function TeamForm({
         label={t('teams.club')}
         {...register('club')}
       />
+
+      {showWithdrawn && (
+        <div className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            id="isWithdrawn"
+            {...register('isWithdrawn')}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <label htmlFor="isWithdrawn" className="text-sm text-gray-700">
+            {t('teams.withdrawn')}
+            <span className="block text-xs text-gray-500">{t('teams.withdrawnHint')}</span>
+          </label>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-4">
         <Button type="button" variant="secondary" onClick={onCancel}>

@@ -12,7 +12,7 @@ pub fn get_teams(db: State<Database>, tournament_id: String) -> Result<Vec<Team>
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, is_withdrawn, created_at
             FROM teams
             WHERE tournament_id = ?1
             ORDER BY team_number
@@ -32,7 +32,8 @@ pub fn get_teams(db: State<Database>, tournament_id: String) -> Result<Vec<Team>
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -49,7 +50,7 @@ pub fn get_team(db: State<Database>, id: String) -> Result<Team, String> {
     let team = conn
         .query_row(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, is_withdrawn, created_at
             FROM teams
             WHERE id = ?1
             "#,
@@ -65,7 +66,8 @@ pub fn get_team(db: State<Database>, id: String) -> Result<Team, String> {
                     region: row.get(6)?,
                     club: row.get(7)?,
                     is_champion: row.get::<_, i32>(8)? != 0,
-                    created_at: row.get(9)?,
+                    is_withdrawn: row.get::<_, i32>(9)? != 0,
+                    created_at: row.get(10)?,
                 })
             },
         )
@@ -87,8 +89,8 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
 
     conn.execute(
         r#"
-        INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, is_withdrawn, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
         "#,
         params![
             id,
@@ -100,6 +102,7 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
             data.region,
             data.club,
             if data.is_champion.unwrap_or(false) { 1 } else { 0 },
+            if data.is_withdrawn.unwrap_or(false) { 1 } else { 0 },
             now,
         ],
     )
@@ -126,6 +129,7 @@ pub fn create_team(db: State<Database>, data: CreateTeamData) -> Result<Team, St
         region: data.region,
         club: data.club,
         is_champion: data.is_champion.unwrap_or(false),
+        is_withdrawn: data.is_withdrawn.unwrap_or(false),
         created_at: now,
     };
 
@@ -161,9 +165,11 @@ fn check_roster_capacity(
     };
     let noun = if is_panache { "players" } else { "teams" };
 
+    // Withdrawn entrants are not going on a court again, so they do not hold a
+    // slot: a replacement can take the place of a team that has pulled out.
     let current: i32 = conn
         .query_row(
-            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+            "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1 AND is_withdrawn = 0",
             params![tournament_id],
             |row| row.get(0),
         )
@@ -253,7 +259,8 @@ pub fn update_team(db: State<Database>, id: String, data: CreateTeamData) -> Res
             player3 = ?5,
             region = ?6,
             club = ?7,
-            is_champion = COALESCE(?8, is_champion)
+            is_champion = COALESCE(?8, is_champion),
+            is_withdrawn = COALESCE(?9, is_withdrawn)
         WHERE id = ?1
         "#,
         params![
@@ -264,7 +271,8 @@ pub fn update_team(db: State<Database>, id: String, data: CreateTeamData) -> Res
             data.player3,
             data.region,
             data.club,
-            data.is_champion.map(|c| if c { 1 } else { 0 })
+            data.is_champion.map(|c| if c { 1 } else { 0 }),
+            data.is_withdrawn.map(|w| if w { 1 } else { 0 })
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -323,8 +331,8 @@ pub fn import_teams(
 
         conn.execute(
             r#"
-            INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            INSERT INTO teams (id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, is_withdrawn, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 id,
@@ -336,6 +344,7 @@ pub fn import_teams(
                 team_data.region,
                 team_data.club,
                 if team_data.is_champion.unwrap_or(false) { 1 } else { 0 },
+                if team_data.is_withdrawn.unwrap_or(false) { 1 } else { 0 },
                 now,
             ],
         )
@@ -435,7 +444,7 @@ pub fn delete_all_teams(db: State<Database>, tournament_id: String) -> Result<()
 pub fn get_team_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Team>, String> {
     match conn.query_row(
         r#"
-        SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
+        SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, is_withdrawn, created_at
         FROM teams
         WHERE id = ?1
         "#,
@@ -451,7 +460,8 @@ pub fn get_team_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Te
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         },
     ) {

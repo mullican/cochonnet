@@ -42,6 +42,7 @@ pub fn run() {
             commands::generate_all_qualifying_rounds,
             commands::delete_all_qualifying_rounds,
             commands::update_game_score,
+            commands::update_game_court,
             commands::complete_round,
             // Bracket commands
             commands::get_brackets,
@@ -49,12 +50,16 @@ pub fn run() {
             commands::generate_brackets,
             commands::delete_brackets,
             commands::update_match_score,
+            commands::update_match_court,
+            commands::get_bracket_court_conflicts,
             // Panache commands
             commands::generate_panache_rounds,
+            commands::generate_panache_round,
             commands::redraw_panache_rounds,
             commands::generate_panache_final,
             commands::get_sitouts_for_round,
             commands::set_team_champion,
+            commands::set_team_withdrawn,
             // Printing / export capability
             commands::print_pdf,
             commands::printing_available,

@@ -2,6 +2,7 @@ use crate::db::Database;
 use crate::models::{GameWithTeams, PanacheSide, QualifyingGame, QualifyingRound, Team, TeamStanding};
 use crate::commands::teams::get_team_by_id;
 use chrono::Utc;
+use super::courts;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rusqlite::params;
@@ -142,7 +143,7 @@ fn load_panache_sides(
             r#"
             SELECT pt.id, pt.team_index,
                    t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3,
-                   t.region, t.club, t.is_champion, t.created_at
+                   t.region, t.club, t.is_champion, t.is_withdrawn, t.created_at
             FROM panache_teams pt
             JOIN panache_team_members ptm ON ptm.panache_team_id = pt.id
             JOIN teams t ON t.id = ptm.team_id
@@ -167,7 +168,8 @@ fn load_panache_sides(
                     region: row.get(8)?,
                     club: row.get(9)?,
                     is_champion: row.get::<_, i32>(10)? != 0,
-                    created_at: row.get(11)?,
+                    is_withdrawn: row.get::<_, i32>(11)? != 0,
+                    created_at: row.get(12)?,
                 },
             ))
         })
@@ -197,7 +199,10 @@ pub fn generate_pairings(
     tournament_id: String,
 ) -> Result<QualifyingRound, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    generate_single_round(&conn, &tournament_id)
+    // Drawn one round at a time, so the round before it has to be in the books:
+    // its results are what the next draw is built from, and for the formats that
+    // ignore results it is still the operator's cue that the round is over.
+    generate_single_round(&conn, &tournament_id, true)
 }
 
 #[tauri::command]
@@ -216,7 +221,8 @@ pub fn generate_all_qualifying_rounds(
         )
         .map_err(|e| e.to_string())?;
 
-    // Swiss and Pool Play require round-by-round generation
+    // Swiss and Pool Play cannot be drawn ahead: each round is built from the
+    // last one's results. The rest can be, and also offer 'Generate Next Round'.
     if pairing_method == "swiss" {
         return Err("Swiss system requires round-by-round generation. Use 'Generate Next Round' instead.".to_string());
     }
@@ -250,7 +256,7 @@ pub fn generate_all_qualifying_rounds(
     if pairing_method == "roundRobin" {
         let team_count: i32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1",
+                "SELECT COUNT(*) FROM teams WHERE tournament_id = ?1 AND is_withdrawn = 0",
                 params![tournament_id],
                 |row| row.get(0),
             )
@@ -265,7 +271,9 @@ pub fn generate_all_qualifying_rounds(
     // Generate all remaining rounds
     let mut rounds = Vec::new();
     for _ in current_round..max_rounds {
-        let round = generate_single_round(&conn, &tournament_id)?;
+        // Nothing has been played yet, so the completeness check that guards
+        // round-by-round generation would stop this loop after its first pass.
+        let round = generate_single_round(&conn, &tournament_id, false)?;
         rounds.push(round);
     }
 
@@ -276,16 +284,23 @@ pub fn generate_all_qualifying_rounds(
     Ok(rounds)
 }
 
+/// Draws one round.
+///
+/// `enforce_prior_complete` is set when the operator asked for this one round
+/// on its own; it is off when the whole schedule is being drawn up front, where
+/// by definition nothing has been played.
 fn generate_single_round(
     conn: &rusqlite::Connection,
     tournament_id: &str,
+    enforce_prior_complete: bool,
 ) -> Result<QualifyingRound, String> {
     // Get tournament info
-    let (pairing_method, region_avoidance): (String, bool) = conn
+    let (pairing_method, region_avoidance, number_of_courts, configured_rounds): (String, bool, i32, i32) = conn
         .query_row(
-            "SELECT pairing_method, region_avoidance FROM tournaments WHERE id = ?1",
+            "SELECT pairing_method, region_avoidance, number_of_courts, number_of_qualifying_rounds \
+             FROM tournaments WHERE id = ?1",
             params![tournament_id],
-            |row| Ok((row.get(0)?, row.get::<_, i32>(1)? != 0)),
+            |row| Ok((row.get(0)?, row.get::<_, i32>(1)? != 0, row.get(2)?, row.get(3)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -300,8 +315,8 @@ fn generate_single_round(
 
     let new_round_number = current_round + 1;
 
-    // Swiss and Pool Play: verify prior round is complete before generating next
-    if (pairing_method == "swiss" || pairing_method == "poolPlay") && current_round > 0 {
+    // Verify the prior round is complete before generating the next one.
+    if enforce_prior_complete && current_round > 0 {
         let prior_round_complete: bool = conn
             .query_row(
                 "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
@@ -320,13 +335,24 @@ fn generate_single_round(
         return Err("Pool Play format only has 3 rounds.".to_string());
     }
 
+    // Every other format stops at the configured count. The cap used to live
+    // only in the generate-all loop, which was enough while the formats drawn
+    // up front had no way to be advanced one round at a time.
+    if pairing_method != "poolPlay" && new_round_number > configured_rounds {
+        return Err(format!(
+            "This tournament is configured for {} qualifying rounds.",
+            configured_rounds
+        ));
+    }
+
     // Get all teams
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, tournament_id, team_number, captain, player2, player3, region, club, is_champion, created_at
+            SELECT id, tournament_id, team_number, captain, player2, player3, region, club,
+                   is_champion, is_withdrawn, created_at
             FROM teams
-            WHERE tournament_id = ?1
+            WHERE tournament_id = ?1 AND is_withdrawn = 0
             "#,
         )
         .map_err(|e| e.to_string())?;
@@ -343,7 +369,8 @@ fn generate_single_round(
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -351,7 +378,7 @@ fn generate_single_round(
         .map_err(|e| e.to_string())?;
 
     if teams.is_empty() {
-        return Err("No teams registered for this tournament".to_string());
+        return Err("No active teams registered for this tournament".to_string());
     }
 
     // Get pairing history
@@ -440,8 +467,22 @@ fn generate_single_round(
         _ => return Err(format!("Unknown pairing method: {}", pairing_method)),
     };
 
-    // Assign courts with rotation
-    let games = assign_courts(pairings)?;
+    let games: Vec<(Option<String>, Option<String>)> = pairings
+        .into_iter()
+        .map(|(t1, t2)| (Some(t1), t2))
+        .collect();
+
+    // Courts used to be the game's position in this list, which put the same
+    // team on the same court round after round - worst of all in round robin,
+    // whose order never changes. Draw them against what each team has already
+    // had instead. A bye still takes a court number, so nothing downstream
+    // shifts, but with no opponent it has no preference of its own.
+    let sides: Vec<Vec<String>> = games
+        .iter()
+        .map(|(t1, t2)| t1.iter().chain(t2.iter()).cloned().collect())
+        .collect();
+    let court_history = courts::load_qualifying_history(conn, tournament_id)?;
+    let assigned = courts::assign_courts(&sides, &court_history, number_of_courts);
 
     // Create the round
     let round_id = Uuid::new_v4().to_string();
@@ -457,9 +498,9 @@ fn generate_single_round(
     .map_err(|e| e.to_string())?;
 
     // Insert games and track history
-    for (court_number, (team1_id, team2_id)) in games.iter().enumerate() {
+    for (index, (team1_id, team2_id)) in games.iter().enumerate() {
         let game_id = Uuid::new_v4().to_string();
-        let court = (court_number as i32) + 1;
+        let court = assigned[index];
         let is_bye = team2_id.is_none();
 
         conn.execute(
@@ -937,17 +978,55 @@ fn pair_teams_with_constraints(
     ));
 }
 
-fn assign_courts(
-    pairings: Vec<(String, Option<String>)>,
-) -> Result<Vec<(Option<String>, Option<String>)>, String> {
-    // Court numbers are assigned sequentially by the caller, based on each
-    // game's position in this list.
-    let games = pairings
-        .into_iter()
-        .map(|(t1, t2)| (Some(t1), t2))
-        .collect();
+/// Moves one qualifying game to another court.
+///
+/// A clash is deliberately not refused: an operator shuffling games around will
+/// pass through states where two share a court, and being stopped mid-shuffle
+/// is worse than the clash. The UI shows it instead.
+#[tauri::command]
+pub fn update_game_court(
+    db: State<Database>,
+    game_id: String,
+    court_number: i32,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    move_game_to_court(&conn, &game_id, court_number)
+}
 
-    Ok(games)
+/// The body of `update_game_court`, separated from the Tauri state handle so it
+/// can be exercised against a plain connection.
+///
+/// A game that has been played is not moved: its court is a record of where it
+/// happened, not a plan for where it will. The UI stops offering the field at
+/// that point; this is what makes it true rather than merely unoffered.
+fn move_game_to_court(
+    conn: &rusqlite::Connection,
+    game_id: &str,
+    court_number: i32,
+) -> Result<(), String> {
+    if court_number < 1 {
+        return Err("A court number starts at 1.".to_string());
+    }
+
+    let played: bool = conn
+        .query_row(
+            "SELECT team1_score IS NOT NULL OR team2_score IS NOT NULL \
+             FROM qualifying_games WHERE id = ?1",
+            params![game_id],
+            |row| Ok(row.get::<_, i32>(0)? != 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if played {
+        return Err("This game has been played; its court can no longer be changed.".to_string());
+    }
+
+    conn.execute(
+        "UPDATE qualifying_games SET court_number = ?2 WHERE id = ?1",
+        params![game_id, court_number],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1484,6 +1563,7 @@ mod tests {
             region: region.map(|r| r.to_string()),
             club: None,
             is_champion: false,
+            is_withdrawn: false,
             created_at: "now".into(),
         }
     }
@@ -1757,6 +1837,264 @@ mod tests {
             let feasible = r <= n - 1;
             println!("  {:>3} teams / {} rounds: {:>3} rematches of {:>5} games (feasible: {:<5}) worst byes to one team: {}",
                 n, r, total_re, total_g, feasible, worst_byes);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Round generation against a real database
+    // -----------------------------------------------------------------------
+
+    use rusqlite::Connection;
+
+    const TID: &str = "tour";
+
+    /// A swissHotel tournament with `n` teams, all active, and no rounds yet.
+    fn seed_round_robin(teams: usize, courts: i32, rounds: i32) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            ) VALUES (
+                ?1, 'Open', 'mixed', 'club', '2026-01-01', '2026-01-02',
+                'D', 'U', 'double', 'single', ?2, ?3, 0, 1, NULL, 16,
+                'swissHotel', 0, 'now', 'now'
+            )
+            "#,
+            params![TID, courts, rounds],
+        )
+        .unwrap();
+
+        for i in 1..=teams {
+            let id = format!("T{}", i);
+            conn.execute(
+                "INSERT INTO teams (id, tournament_id, team_number, captain, player2, is_champion, is_withdrawn, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'p2', 0, 0, 'now')",
+                params![id, TID, i as i32, format!("Captain {}", i)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO team_standings (id, tournament_id, team_id) VALUES (?1, ?2, ?3)",
+                params![format!("S{}", i), TID, id],
+            )
+            .unwrap();
+        }
+
+        conn
+    }
+
+    fn teams_in_round(conn: &Connection, round_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT team1_id, team2_id FROM qualifying_games WHERE round_id = ?1")
+            .unwrap();
+        stmt.query_map(params![round_id], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .unwrap()
+        .flat_map(|r| {
+            let (a, b) = r.unwrap();
+            a.into_iter().chain(b)
+        })
+        .collect()
+    }
+
+    /// The point of withdrawal: a team that has pulled out cannot be deleted -
+    /// its played games and its opponents' Buchholz depend on it - so the draw
+    /// has to be the thing that leaves it out.
+    #[test]
+    fn a_withdrawn_team_is_left_out_of_later_rounds() {
+        let conn = seed_round_robin(6, 3, 5);
+
+        let first = generate_single_round(&conn, TID, false).unwrap();
+        assert!(teams_in_round(&conn, &first.id).contains(&"T3".to_string()));
+
+        conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
+        conn.execute("UPDATE teams SET is_withdrawn = 1 WHERE id = 'T3'", []).unwrap();
+
+        let second = generate_single_round(&conn, TID, true).unwrap();
+        let playing = teams_in_round(&conn, &second.id);
+        assert!(
+            !playing.contains(&"T3".to_string()),
+            "a withdrawn team was drawn into round 2: {:?}",
+            playing
+        );
+        assert_eq!(playing.len(), 5, "the rest of the field should still be playing");
+    }
+
+    /// Whether a round needs a bye follows from how many teams are actually
+    /// still in, not from how many registered.
+    #[test]
+    fn an_odd_active_count_draws_a_bye() {
+        let conn = seed_round_robin(6, 3, 5);
+
+        let first = generate_single_round(&conn, TID, false).unwrap();
+        let byes: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM qualifying_games WHERE round_id = ?1 AND is_bye = 1",
+                params![first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(byes, 0, "six teams pair up evenly");
+
+        conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
+        conn.execute("UPDATE teams SET is_withdrawn = 1 WHERE id = 'T6'", []).unwrap();
+
+        let second = generate_single_round(&conn, TID, true).unwrap();
+        let byes: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM qualifying_games WHERE round_id = ?1 AND is_bye = 1",
+                params![second.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(byes, 1, "five active teams need a bye");
+    }
+
+    /// Drawing one round at a time is only safe if the round before it is done;
+    /// this guard used to cover Swiss and Pool Play only, which was enough
+    /// while no other format could be advanced a round at a time.
+    #[test]
+    fn a_round_by_round_draw_waits_for_the_previous_round() {
+        let conn = seed_round_robin(6, 3, 5);
+        generate_single_round(&conn, TID, false).unwrap();
+
+        let err = generate_single_round(&conn, TID, true).unwrap_err();
+        assert!(err.contains("Previous round"), "unexpected refusal: {}", err);
+    }
+
+    /// The configured round count used to be enforced only by the loop that
+    /// drew every round at once, so a round-by-round draw could run past it.
+    #[test]
+    fn a_round_by_round_draw_stops_at_the_configured_count() {
+        let conn = seed_round_robin(6, 3, 2);
+
+        for _ in 0..2 {
+            generate_single_round(&conn, TID, false).unwrap();
+            conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
+        }
+
+        let err = generate_single_round(&conn, TID, true).unwrap_err();
+        assert!(err.contains("configured for 2"), "unexpected refusal: {}", err);
+    }
+
+    /// A court is a plan until the game is played and a record afterwards.
+    /// The UI stops offering the field once a score is in; this is what makes
+    /// that true rather than merely unoffered.
+    #[test]
+    fn a_played_game_cannot_be_moved_to_another_court() {
+        let conn = seed_round_robin(6, 3, 5);
+        let round = generate_single_round(&conn, TID, false).unwrap();
+
+        let game_id: String = conn
+            .query_row(
+                "SELECT id FROM qualifying_games WHERE round_id = ?1 LIMIT 1",
+                params![round.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // Unplayed: the court moves.
+        move_game_to_court(&conn, &game_id, 2).unwrap();
+        let court: i32 = conn
+            .query_row(
+                "SELECT court_number FROM qualifying_games WHERE id = ?1",
+                params![game_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(court, 2);
+
+        // A court number below 1 is never a court.
+        assert!(move_game_to_court(&conn, &game_id, 0).is_err());
+
+        conn.execute(
+            "UPDATE qualifying_games SET team1_score = 13, team2_score = 9 WHERE id = ?1",
+            params![game_id],
+        )
+        .unwrap();
+
+        let err = move_game_to_court(&conn, &game_id, 3).unwrap_err();
+        assert!(err.contains("played"), "unexpected refusal: {}", err);
+
+        let court: i32 = conn
+            .query_row(
+                "SELECT court_number FROM qualifying_games WHERE id = ?1",
+                params![game_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(court, 2, "the played game was moved anyway");
+    }
+
+    /// Courts used to be the game's index in the pairing list. Round robin
+    /// never shuffles that list, so the team at the top of the circle played
+    /// court 1 in every single round of the tournament.
+    #[test]
+    fn courts_rotate_across_rounds() {
+        let conn = seed_round_robin(6, 3, 4);
+
+        let mut seen: HashMap<String, Vec<i32>> = HashMap::new();
+        for _ in 0..4 {
+            let round = generate_single_round(&conn, TID, false).unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT team1_id, team2_id, court_number FROM qualifying_games WHERE round_id = ?1",
+                )
+                .unwrap();
+            let rows: Vec<(Option<String>, Option<String>, i32)> = stmt
+                .query_map(params![round.id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let mut this_round: Vec<i32> = rows.iter().map(|(_, _, court)| *court).collect();
+            let games = this_round.len();
+            this_round.sort_unstable();
+            this_round.dedup();
+            assert_eq!(this_round.len(), games, "two games in one round shared a court");
+            assert!(
+                this_round.iter().all(|court| (1..=3).contains(court)),
+                "a game was sent to a court the venue does not have: {:?}",
+                this_round
+            );
+
+            for (a, b, court) in rows {
+                for team in a.into_iter().chain(b) {
+                    seen.entry(team).or_default().push(court);
+                }
+            }
+        }
+
+        // The bug this guards: a team pinned to one court for the whole
+        // tournament.
+        //
+        // The stronger "never twice running" property is asserted in the
+        // solver's own tests, where the pairings are fixed and a clean answer
+        // always exists. It cannot be asserted here: these pairings reshuffle
+        // every round, so a game's two teams can arrive with two different
+        // courts to avoid, and with only as many courts as games there may be
+        // no assignment that satisfies everyone. The solver minimises the
+        // damage; it cannot conjure a solution that is not there.
+        for (team, courts) in &seen {
+            assert_eq!(courts.len(), 4, "{} did not play every round", team);
+
+            let mut distinct = courts.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            assert!(
+                distinct.len() > 1,
+                "{} drew court {} in every round: {:?}",
+                team,
+                courts[0],
+                courts
+            );
         }
     }
 }

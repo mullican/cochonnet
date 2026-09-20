@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { Button, Input, Select, SelectItem, Card, CardContent, CardFooter } from '../../components/ui';
-import type { TournamentFormData } from '../../types';
+import type { TournamentFormData, PaperSize } from '../../types';
+import { PAPER_SIZE_OPTIONS } from '../export/pdfPage';
 
 interface TournamentFormProps {
   defaultValues?: Partial<TournamentFormData>;
@@ -10,9 +12,11 @@ interface TournamentFormProps {
   isLoading?: boolean;
   hasQualifyingRounds?: boolean;
   hasBrackets?: boolean;
+  /** A failure from the save itself, shown beside the Save button. */
+  error?: string | null;
 }
 
-export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, hasQualifyingRounds = false, hasBrackets = false }: TournamentFormProps) {
+export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, hasQualifyingRounds = false, hasBrackets = false, error }: TournamentFormProps) {
   const { t } = useTranslation();
 
   const {
@@ -42,6 +46,8 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
       bracketSize: 16,
       pairingMethod: 'swiss',
       regionAvoidance: false,
+      paperSize: 'letter',
+      logo: null,
       ...defaultValues,
     },
   });
@@ -54,6 +60,34 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
   // Panache has no bracket, and its Format field sets the size of the temporary
   // teams the draw builds rather than describing a registered team.
   const isPanache = watch('pairingMethod') === 'panache';
+
+  const logo = watch('logo');
+  const [logoError, setLogoError] = useState<string | null>(null);
+
+  // The PDF renderer draws raster images only, so an SVG or a PDF would come
+  // out as an empty box rather than an error. The size cap is because the logo
+  // is stored inline as a data URI, in the database and in every backup file.
+  const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+  const LOGO_TYPES = ['image/png', 'image/jpeg'];
+
+  const handleLogoChange = (file: File | undefined) => {
+    setLogoError(null);
+    if (!file) return;
+
+    if (!LOGO_TYPES.includes(file.type)) {
+      setLogoError(t('validation.logoFormat'));
+      return;
+    }
+    if (file.size > LOGO_MAX_BYTES) {
+      setLogoError(t('validation.logoTooLarge'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => setValue('logo', String(reader.result));
+    reader.onerror = () => setLogoError(t('validation.logoFormat'));
+    reader.readAsDataURL(file);
+  };
 
   const validateRequired = (value: string) => {
     if (!value || value.trim() === '') {
@@ -131,6 +165,9 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
               error={errors.endDate?.message}
             />
 
+            {/* Locked through the element, never through register's `disabled`
+                option: that option drops the field from the submitted values,
+                and the backend needs the unchanged number to compare against. */}
             <Input
               type="number"
               min={1}
@@ -138,7 +175,7 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
               label={t('tournaments.numberOfQualifyingRounds')}
               {...register('numberOfQualifyingRounds', { valueAsNumber: true })}
               error={errors.numberOfQualifyingRounds?.message}
-              disabled={watch('pairingMethod') === 'poolPlay'}
+              disabled={hasQualifyingRounds || watch('pairingMethod') === 'poolPlay'}
             />
 
             <Input
@@ -147,8 +184,13 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
               label={t('tournaments.numberOfCourts')}
               {...register('numberOfCourts', { valueAsNumber: true })}
               error={errors.numberOfCourts?.message}
+              disabled={hasQualifyingRounds}
             />
           </div>
+
+          {hasQualifyingRounds && (
+            <p className="text-xs text-gray-500">{t('tournaments.lockedAfterRounds')}</p>
+          )}
 
           {/* Umpire Information */}
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 pt-2">
@@ -194,6 +236,57 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
                 </Button>
               </div>
             ))}
+          </div>
+
+          {/* Printing: what the PDFs are laid out for, and what tops them. */}
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 pt-2">
+            <Select
+              label={t('tournaments.paperSize')}
+              value={watch('paperSize')}
+              onValueChange={(v) => setValue('paperSize', v as PaperSize)}
+            >
+              {PAPER_SIZE_OPTIONS.map((size) => (
+                <SelectItem key={size} value={size}>
+                  {t(`tournaments.paperSizeOptions.${size}`)}
+                </SelectItem>
+              ))}
+            </Select>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">
+                {t('tournaments.logo')}
+              </label>
+              <div className="flex items-center gap-3">
+                {logo && (
+                  <img
+                    src={logo}
+                    alt=""
+                    className="h-10 w-20 rounded border border-gray-200 object-contain"
+                  />
+                )}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  onChange={(e) => handleLogoChange(e.target.files?.[0])}
+                  className="flex-1 text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:text-gray-700"
+                />
+                {logo && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setValue('logo', null);
+                      setLogoError(null);
+                    }}
+                  >
+                    {t('common.remove')}
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">{t('tournaments.logoHint')}</p>
+              {logoError && <span className="text-sm text-red-600">{logoError}</span>}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -286,13 +379,18 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
           </div>
         </CardContent>
 
-        <CardFooter className="flex justify-end gap-4">
-          <Button type="button" variant="secondary" onClick={onCancel}>
-            {t('common.cancel')}
-          </Button>
-          <Button type="submit" disabled={isLoading}>
-            {isLoading ? t('common.loading') : t('common.save')}
-          </Button>
+        <CardFooter className="flex flex-col items-stretch gap-4">
+          {error && (
+            <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">{error}</div>
+          )}
+          <div className="flex justify-end gap-4">
+            <Button type="button" variant="secondary" onClick={onCancel}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? t('common.loading') : t('common.save')}
+            </Button>
+          </div>
         </CardFooter>
       </Card>
     </form>

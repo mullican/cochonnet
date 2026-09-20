@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { useTournamentStore } from '../../stores/tournamentStore';
 import {
@@ -33,17 +34,38 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     loading,
     fetchMatchesForBracket,
     updateMatchScore,
+    updateMatchCourt,
+    currentTournament,
   } = useTournamentStore();
 
   const [selectedMatch, setSelectedMatch] = useState<BracketMatch | null>(null);
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
   const [team1Score, setTeam1Score] = useState('');
   const [team2Score, setTeam2Score] = useState('');
+  const [court, setCourt] = useState('');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Matches sharing a court with another game played at the same time. A wave
+  // spans every bracket, and this view only holds one, so the backend works it
+  // out - it is where the wave is defined.
+  const [clashing, setClashing] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const tournamentId = currentTournament?.id;
+
+  const refreshConflicts = useCallback(async () => {
+    if (!tournamentId) return;
+    try {
+      const ids = await invoke<string[]>('get_bracket_court_conflicts', { tournamentId });
+      setClashing(new Set(ids));
+    } catch (error) {
+      console.error('Failed to check court conflicts:', error);
+    }
+  }, [tournamentId]);
 
   useEffect(() => {
     fetchMatchesForBracket(bracketId);
-  }, [bracketId, fetchMatchesForBracket]);
+    refreshConflicts();
+  }, [bracketId, fetchMatchesForBracket, refreshConflicts]);
 
   // A bracket of fewer than two entrants has no matches to lay out; log2 then
   // gives 0 (or -Infinity) rounds and the view renders an empty frame with no
@@ -95,36 +117,59 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
     return true;
   };
 
+  // Once a game has been played its court is a record of where it happened, so
+  // only an unplayed match can be moved.
+  const canEditCourt = (match: BracketMatch) =>
+    !match.isBye && match.team1Score === null && match.team2Score === null;
+
+  // The dialog is worth opening if either half of it is live.
+  const canOpenMatch = (match: BracketMatch) =>
+    canEditMatch(match) || canEditCourt(match);
+
   const handleMatchClick = (match: BracketMatch) => {
-    if (!canEditMatch(match)) return;
+    if (!canOpenMatch(match)) return;
     setSelectedMatch(match);
     setTeam1Score(match.team1Score?.toString() || '');
     setTeam2Score(match.team2Score?.toString() || '');
+    setCourt(match.courtNumber?.toString() || '');
+    setSaveError(null);
     setScoreDialogOpen(true);
   };
 
-  const handleSaveScore = async () => {
+  const handleSave = async () => {
     if (!selectedMatch) return;
+    setSaveError(null);
 
-    const s1 = parseInt(team1Score);
-    const s2 = parseInt(team2Score);
-
-    if (isNaN(s1) || isNaN(s2)) {
+    const courtEditable = canEditCourt(selectedMatch);
+    const nextCourt = parseInt(court, 10);
+    if (courtEditable && court.trim() !== '' && (isNaN(nextCourt) || nextCourt < 1)) {
+      setSaveError(t('validation.positiveNumber'));
       return;
     }
 
-    if (s1 === s2) {
-      alert('Scores cannot be tied. One team must win.');
+    const scoresEditable = canEditMatch(selectedMatch);
+    const s1 = parseInt(team1Score);
+    const s2 = parseInt(team2Score);
+    const scoresEntered = !isNaN(s1) && !isNaN(s2);
+
+    if (scoresEditable && scoresEntered && s1 === s2) {
+      setSaveError(t('brackets.tiedScore'));
       return;
     }
 
     try {
-      await updateMatchScore(selectedMatch.id, s1, s2);
+      if (courtEditable && !isNaN(nextCourt) && nextCourt !== selectedMatch.courtNumber) {
+        await updateMatchCourt(selectedMatch.id, nextCourt);
+      }
+      if (scoresEditable && scoresEntered) {
+        await updateMatchScore(selectedMatch.id, s1, s2);
+      }
       await fetchMatchesForBracket(bracketId);
+      await refreshConflicts();
       setScoreDialogOpen(false);
       setSelectedMatch(null);
     } catch (error) {
-      console.error('Failed to save score:', error);
+      setSaveError(String(error));
     }
   };
 
@@ -172,21 +217,27 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                   }}
                 >
                   {matches.map((match) => {
-                    const isEditable = canEditMatch(match);
+                    const isOpenable = canOpenMatch(match);
+                    const hasClash = clashing.has(match.id);
                     return (
                       <Card
                         key={match.id}
                         className={`w-48 transition-shadow ${
-                          isEditable
+                          isOpenable
                             ? 'cursor-pointer hover:shadow-md hover:border-primary-300'
                             : 'cursor-default'
-                        }`}
+                        } ${hasClash ? 'border-red-400' : ''}`}
                         onClick={() => handleMatchClick(match)}
                         style={{ height: `${MATCH_HEIGHT}px` }}
                       >
                         <CardContent className="p-2 h-full flex flex-col justify-between">
                           {/* Court number */}
-                          <div className="text-xs text-gray-400 text-center">
+                          <div
+                            className={`text-xs text-center ${
+                              hasClash ? 'font-medium text-red-600' : 'text-gray-400'
+                            }`}
+                            title={hasClash ? t('brackets.courtClash') : undefined}
+                          >
                             {match.courtNumber ? `${t('pairing.court')} ${match.courtNumber}` : ''}
                           </div>
 
@@ -331,51 +382,88 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
       <Dialog open={scoreDialogOpen} onOpenChange={setScoreDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('brackets.enterScore')}</DialogTitle>
+            <DialogTitle>
+              {selectedMatch && !canEditMatch(selectedMatch)
+                ? t('brackets.editCourt')
+                : t('brackets.enterScore')}
+            </DialogTitle>
+            {/* A card only opens when something on it is live, so the dialog
+                never shows up with everything greyed out. */}
           </DialogHeader>
           {selectedMatch && (
             <div className="space-y-4">
-              {selectedMatch.courtNumber && (
-                <div className="text-sm text-gray-500 text-center">
-                  {t('pairing.court')} {selectedMatch.courtNumber}
+              {canEditCourt(selectedMatch) ? (
+                <div className="flex items-center gap-2">
+                  {/* Three digits is more courts than any venue has. */}
+                  <Input
+                    label={t('pairing.court')}
+                    type="number"
+                    min={1}
+                    max={999}
+                    value={court}
+                    onChange={(e) => setCourt(e.target.value)}
+                    className={`w-14 px-1 text-center ${
+                      clashing.has(selectedMatch.id) ? 'border-red-500 focus:border-red-500' : ''
+                    }`}
+                  />
+                  {clashing.has(selectedMatch.id) && (
+                    <span className="pt-6 text-xs text-red-600">{t('brackets.courtClash')}</span>
+                  )}
                 </div>
+              ) : (
+                selectedMatch.courtNumber && (
+                  <div className="text-sm text-gray-500">
+                    {t('pairing.court')} {selectedMatch.courtNumber}
+                  </div>
+                )
               )}
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    <TeamLabel team={getTeam(selectedMatch.team1Id)} />
-                  </label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={13}
-                    value={team1Score}
-                    onChange={(e) => setTeam1Score(e.target.value)}
-                    className="mt-1"
-                  />
+
+              {canEditMatch(selectedMatch) ? (
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-gray-700">
+                      <TeamLabel team={getTeam(selectedMatch.team1Id)} />
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={13}
+                      value={team1Score}
+                      onChange={(e) => setTeam1Score(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <span className="text-gray-400 pt-6">{t('pairing.vs')}</span>
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-gray-700">
+                      <TeamLabel team={getTeam(selectedMatch.team2Id)} />
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={13}
+                      value={team2Score}
+                      onChange={(e) => setTeam2Score(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
                 </div>
-                <span className="text-gray-400 pt-6">{t('pairing.vs')}</span>
-                <div className="flex-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    <TeamLabel team={getTeam(selectedMatch.team2Id)} />
-                  </label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={13}
-                    value={team2Score}
-                    onChange={(e) => setTeam2Score(e.target.value)}
-                    className="mt-1"
-                  />
-                </div>
-              </div>
+              ) : (
+                /* No score to enter yet - its feeders have not finished - but
+                   the court can still be moved. */
+                <p className="text-sm text-gray-500">{t('brackets.courtOnly')}</p>
+              )}
+
+              {saveError && (
+                <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button variant="secondary" onClick={() => setScoreDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleSaveScore}>{t('common.save')}</Button>
+            <Button onClick={handleSave}>{t('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

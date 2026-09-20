@@ -1,10 +1,10 @@
+use super::courts;
 use crate::db::Database;
 use crate::models::{Bracket, BracketMatch, MatchWithTeams, Team};
 use crate::commands::teams::get_team_by_id;
 use chrono::Utc;
 use rand::seq::SliceRandom;
 use rusqlite::params;
-use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
@@ -53,7 +53,7 @@ pub fn get_matches_for_bracket(
         .prepare(
             r#"
             SELECT id, bracket_id, round_number, match_number, court_number, team1_id, team2_id,
-                   team1_score, team2_score, winner_id, next_match_id, is_bye
+                   team1_score, team2_score, winner_id, next_match_id, is_bye, court_is_manual
             FROM bracket_matches
             WHERE bracket_id = ?1
             ORDER BY round_number DESC, match_number ASC
@@ -76,6 +76,7 @@ pub fn get_matches_for_bracket(
                 winner_id: row.get(9)?,
                 next_match_id: row.get(10)?,
                 is_bye: row.get::<_, i32>(11)? != 0,
+                court_is_manual: row.get::<_, i32>(12)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -114,6 +115,7 @@ pub fn get_matches_for_bracket(
             winner_id: m.winner_id,
             next_match_id: m.next_match_id,
             is_bye: m.is_bye,
+            court_is_manual: m.court_is_manual,
             team1,
             team2,
             winner,
@@ -221,10 +223,11 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3, t.region, t.club, t.is_champion, t.created_at
+            SELECT t.id, t.tournament_id, t.team_number, t.captain, t.player2, t.player3, t.region, t.club,
+                   t.is_champion, t.is_withdrawn, t.created_at
             FROM teams t
             JOIN team_standings ts ON t.id = ts.team_id AND t.tournament_id = ts.tournament_id
-            WHERE t.tournament_id = ?1
+            WHERE t.tournament_id = ?1 AND t.is_withdrawn = 0
             ORDER BY ts.rank ASC
             "#,
         )
@@ -242,7 +245,8 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
                 region: row.get(6)?,
                 club: row.get(7)?,
                 is_champion: row.get::<_, i32>(8)? != 0,
-                created_at: row.get(9)?,
+                is_withdrawn: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -380,12 +384,33 @@ fn play_wave(round_number: i32, is_consolante: bool) -> i32 {
     }
 }
 
+/// One bracket match, as court assignment sees it.
+struct CourtCandidate {
+    id: String,
+    wave: i32,
+    is_bye: bool,
+    /// Already played, or set by hand: its court is not ours to move.
+    is_fixed: bool,
+    /// A score has been entered, which also means its wave is under way.
+    played: bool,
+    court: Option<i32>,
+    /// The teams on court, where they are known. A match still waiting on its
+    /// feeders has nobody yet, so it has no history to avoid.
+    teams: Vec<String>,
+}
+
 /// Numbers the courts across every bracket in the tournament.
 ///
 /// Courts used to be numbered within each bracket, which sent four different
 /// games to court 1 as soon as more than one bracket ran. A court number only
 /// means something tournament-wide, so this renumbers every bracket together
-/// and is re-run whenever a bracket is added.
+/// and is re-run whenever a bracket is added or a result comes in.
+///
+/// Within a wave the courts are drawn against what the teams have already had,
+/// counting the qualifying rounds - a team that spent the morning on court 3
+/// should not be sent back to it for their quarter-final. A match that has been
+/// played, or whose court the operator set by hand, keeps the court it has and
+/// simply takes it out of what the rest of the wave can use.
 ///
 /// BYEs are left without a court: nobody plays them, so they take up no space.
 fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
@@ -404,7 +429,8 @@ fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Re
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT m.id, m.round_number, b.is_consolante, m.is_bye
+            SELECT m.id, m.round_number, b.is_consolante, m.is_bye, m.court_is_manual,
+                   m.court_number, m.team1_id, m.team2_id, m.team1_score, m.team2_score
             FROM bracket_matches m
             JOIN brackets b ON b.id = m.bracket_id
             WHERE b.tournament_id = ?1
@@ -413,37 +439,112 @@ fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Re
         )
         .map_err(|e| e.to_string())?;
 
-    let matches: Vec<(String, i32, bool, bool)> = stmt
+    let matches: Vec<CourtCandidate> = stmt
         .query_map(params![tournament_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get::<_, i32>(2)? != 0,
-                row.get::<_, i32>(3)? != 0,
-            ))
+            let is_manual: bool = row.get::<_, i32>(4)? != 0;
+            let court: Option<i32> = row.get(5)?;
+            let team1: Option<String> = row.get(6)?;
+            let team2: Option<String> = row.get(7)?;
+            let score1: Option<i32> = row.get(8)?;
+            let score2: Option<i32> = row.get(9)?;
+            let played = score1.is_some() || score2.is_some();
+
+            Ok(CourtCandidate {
+                id: row.get(0)?,
+                wave: play_wave(row.get(1)?, row.get::<_, i32>(2)? != 0),
+                is_bye: row.get::<_, i32>(3)? != 0,
+                is_fixed: court.is_some() && (is_manual || played),
+                played,
+                court,
+                teams: team1.into_iter().chain(team2).collect(),
+            })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    // Each wave is numbered from court 1 upward. A wave with more games than
-    // the tournament has courts wraps around, which is what happens on the
-    // ground too: the extra games wait for a court to free up.
-    let mut filled: HashMap<i32, i32> = HashMap::new();
+    // What the qualifying rounds already put these teams on. Earlier waves add
+    // to it as they are settled, so a bracket run reads as one continuation of
+    // the morning rather than starting over.
+    let mut history = courts::load_qualifying_history(conn, tournament_id)?;
 
-    for (match_id, round_number, is_consolante, is_bye) in matches {
-        let court: Option<i32> = if is_bye {
-            None
-        } else {
-            let taken = filled.entry(play_wave(round_number, is_consolante)).or_insert(0);
-            let court = (*taken % number_of_courts) + 1;
-            *taken += 1;
-            Some(court)
-        };
+    let mut waves: Vec<i32> = matches
+        .iter()
+        .filter(|m| !m.is_bye)
+        .map(|m| m.wave)
+        .collect();
+    waves.sort_unstable();
+    waves.dedup();
 
+    for wave in &waves {
+        let playing: Vec<&CourtCandidate> = matches
+            .iter()
+            .filter(|m| !m.is_bye && m.wave == *wave)
+            .collect();
+
+        // Once any game in a wave has been scored the wave is on the ground:
+        // the other games are being played right now, on the courts the sheet
+        // sent them to. Renumbering under them would be worse than any repeat,
+        // so a wave that has started keeps every court it has - it only feeds
+        // the history the later waves are drawn against.
+        let under_way = playing.iter().any(|m| m.played);
+        if under_way {
+            history.previous.clear();
+            for candidate in &playing {
+                if let Some(court) = candidate.court {
+                    for team in &candidate.teams {
+                        history.record(team, court, true);
+                    }
+                }
+            }
+            continue;
+        }
+
+        // A wave with more games than the venue has courts has to double up:
+        // the extra games wait for a court to free up.
+        let mut pool = courts::court_slots(playing.len(), number_of_courts);
+        for fixed in playing.iter().filter(|m| m.is_fixed) {
+            if let Some(court) = fixed.court {
+                if let Some(idx) = pool.iter().position(|slot| *slot == court) {
+                    pool.remove(idx);
+                } else if !pool.is_empty() {
+                    // The operator put a game on a court outside the pool. It
+                    // stays there; the wave just has one fewer slot to share.
+                    pool.pop();
+                }
+            }
+        }
+
+        let movable: Vec<&CourtCandidate> = playing.iter().copied().filter(|m| !m.is_fixed).collect();
+        let sides: Vec<Vec<String>> = movable.iter().map(|m| m.teams.clone()).collect();
+        let assigned = courts::assign_courts_from_slots(&sides, &history, &pool);
+
+        for (candidate, court) in movable.iter().zip(&assigned) {
+            conn.execute(
+                "UPDATE bracket_matches SET court_number = ?2 WHERE id = ?1",
+                params![candidate.id, court],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        // Only the wave just settled counts as "the round before" the next one.
+        history.previous.clear();
+        let settled = movable
+            .iter()
+            .zip(assigned.iter().copied())
+            .chain(playing.iter().filter(|m| m.is_fixed).filter_map(|m| m.court.map(|c| (m, c))));
+        for (candidate, court) in settled {
+            for team in &candidate.teams {
+                history.record(team, court, true);
+            }
+        }
+    }
+
+    // Byes never hold a court, however they were left by an earlier run.
+    for candidate in matches.iter().filter(|m| m.is_bye) {
         conn.execute(
-            "UPDATE bracket_matches SET court_number = ?2 WHERE id = ?1",
-            params![match_id, court],
+            "UPDATE bracket_matches SET court_number = NULL WHERE id = ?1",
+            params![candidate.id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -689,7 +790,119 @@ pub fn update_match_score(
         check_and_create_consolante(&conn, &bracket_id)?;
     }
 
+    // The winner has just moved into the next round, so a match that had nobody
+    // in it now has teams and a court history to keep clear of. Played and
+    // hand-set courts are left where they are.
+    let tournament_id: String = conn
+        .query_row(
+            "SELECT tournament_id FROM brackets WHERE id = ?1",
+            params![bracket_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    assign_bracket_courts(&conn, &tournament_id)?;
+
     Ok(())
+}
+
+/// Moves one bracket match to another court.
+///
+/// Flags it as hand-set, which is what keeps the automatic renumbering - it
+/// re-runs on every result - from putting it straight back.
+#[tauri::command]
+pub fn update_match_court(
+    db: State<Database>,
+    match_id: String,
+    court_number: i32,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    move_match_to_court(&conn, &match_id, court_number)
+}
+
+/// Moves a bracket match to another court. Same rule as the qualifying games:
+/// a clash is allowed through, a played match is not moved.
+fn move_match_to_court(
+    conn: &rusqlite::Connection,
+    match_id: &str,
+    court_number: i32,
+) -> Result<(), String> {
+    if court_number < 1 {
+        return Err("A court number starts at 1.".to_string());
+    }
+
+    let (played, is_bye): (bool, bool) = conn
+        .query_row(
+            "SELECT team1_score IS NOT NULL OR team2_score IS NOT NULL, is_bye \
+             FROM bracket_matches WHERE id = ?1",
+            params![match_id],
+            |row| Ok((row.get::<_, i32>(0)? != 0, row.get::<_, i32>(1)? != 0)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if is_bye {
+        return Err("A bye is not played on a court.".to_string());
+    }
+    if played {
+        return Err("This match has been played; its court can no longer be changed.".to_string());
+    }
+
+    conn.execute(
+        "UPDATE bracket_matches SET court_number = ?2, court_is_manual = 1 WHERE id = ?1",
+        params![match_id, court_number],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The bracket matches currently sharing a court with another match playing at
+/// the same time.
+///
+/// A clash spans every bracket in the tournament, and the frontend only ever
+/// holds the matches of the bracket being viewed, so the check belongs here
+/// where `play_wave` already defines what "at the same time" means.
+#[tauri::command]
+pub fn get_bracket_court_conflicts(
+    db: State<Database>,
+    tournament_id: String,
+) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT m.id, m.round_number, b.is_consolante, m.court_number
+            FROM bracket_matches m
+            JOIN brackets b ON b.id = m.bracket_id
+            WHERE b.tournament_id = ?1 AND m.is_bye = 0 AND m.court_number IS NOT NULL
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<(String, i32, i32)> = stmt
+        .query_map(params![tournament_id], |row| {
+            Ok((
+                row.get(0)?,
+                play_wave(row.get(1)?, row.get::<_, i32>(2)? != 0),
+                row.get(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut by_slot: std::collections::HashMap<(i32, i32), Vec<String>> =
+        std::collections::HashMap::new();
+    for (id, wave, court) in rows {
+        by_slot.entry((wave, court)).or_default().push(id);
+    }
+
+    let mut clashing: Vec<String> = by_slot
+        .into_values()
+        .filter(|ids| ids.len() > 1)
+        .flatten()
+        .collect();
+    clashing.sort();
+    Ok(clashing)
 }
 
 fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) -> Result<(), String> {
@@ -1076,11 +1289,23 @@ mod tests {
                 .unwrap()
         };
 
-        // A's round 2 (8 games) and AA's round 1 (8 games) play together.
-        let main_round2 = courts("A", 2);
-        let consolante_round1 = courts("AA", 1);
-        assert_eq!(main_round2, (1..=8).collect::<Vec<_>>());
-        assert_eq!(consolante_round1, (9..=16).collect::<Vec<_>>());
+        // A's round 2 (8 games) and AA's round 1 (8 games) play together, so
+        // between them they need sixteen courts, not eight used twice. Which
+        // game gets which court is the draw's business - it spreads teams off
+        // courts they have already had - so only the sharing is asserted here.
+        let mut wave: Vec<i32> = courts("A", 2);
+        wave.extend(courts("AA", 1));
+        assert_eq!(wave.len(), 16);
+
+        let mut distinct = wave.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            16,
+            "the consolante was numbered as if it had the courts to itself: {:?}",
+            wave
+        );
     }
 
     #[test]
@@ -1100,8 +1325,9 @@ mod tests {
         assert_eq!(byes_with_courts, 0);
 
         // The two real first-round games take courts 1 and 2, not 3 and 4:
-        // a walkover should not hold a court open.
-        let first_round: Vec<i32> = {
+        // a walkover should not hold a court open. Which of them gets which is
+        // the draw's business, so the courts are compared as a set.
+        let mut first_round: Vec<i32> = {
             let mut stmt = conn
                 .prepare(
                     "SELECT court_number FROM bracket_matches
@@ -1113,7 +1339,92 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap()
         };
+        first_round.sort_unstable();
         assert_eq!(first_round, vec![1, 2]);
+    }
+
+    /// Courts are renumbered on every result and whenever a bracket is added.
+    /// A court the operator set by hand has to survive all of that, or moving a
+    /// game would last only until the next score was entered.
+    #[test]
+    fn a_hand_set_court_survives_the_renumbering() {
+        let conn = setup(8);
+        add_bracket(&conn, "A", false, 8, 0);
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        conn.execute(
+            "UPDATE bracket_matches SET court_number = 7, court_is_manual = 1 WHERE id = 'A-r1-m1'",
+            [],
+        )
+        .unwrap();
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let court: i32 = conn
+            .query_row(
+                "SELECT court_number FROM bracket_matches WHERE id = 'A-r1-m1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(court, 7, "the hand-set court was renumbered away");
+
+        // And the court it was moved onto is not handed out twice in that wave.
+        let mut wave: Vec<i32> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT court_number FROM bracket_matches
+                     WHERE round_number = 1 AND is_bye = 0 AND court_number IS NOT NULL",
+                )
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let total = wave.len();
+        wave.sort_unstable();
+        wave.dedup();
+        assert_eq!(wave.len(), total, "the hand-set court was handed out again");
+    }
+
+    /// Courts are redrawn whenever a result comes in, so that a match whose
+    /// teams have only just arrived gets a court chosen against their history.
+    /// The games alongside it are on the ground at that moment, though, and
+    /// moving them out from under the printed sheet would be worse than any
+    /// repeat: once a wave has a score in it, every court in it stands.
+    #[test]
+    fn a_wave_that_has_started_is_not_renumbered() {
+        let conn = setup(8);
+        add_bracket(&conn, "A", false, 8, 0);
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        let before = |id: &str| -> i32 {
+            conn.query_row(
+                "SELECT court_number FROM bracket_matches WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        let untouched = before("A-r1-m2");
+
+        // One game in the wave is scored; the rest are being played right now.
+        conn.execute(
+            "UPDATE bracket_matches SET team1_score = 13, team2_score = 7 WHERE id = 'A-r1-m1'",
+            [],
+        )
+        .unwrap();
+
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        assert_eq!(
+            before("A-r1-m2"),
+            untouched,
+            "a game in progress was moved to another court"
+        );
     }
 
     /// More games than courts is a real possibility for a small club; the
