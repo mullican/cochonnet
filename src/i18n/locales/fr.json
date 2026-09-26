@@ -91,13 +91,6 @@
     "noTournaments": "Pas encore de tournois. Créez votre premier tournoi pour commencer.",
     "qualifyingRounds": "Tours de Qualification",
     "teamsRegistered": "Équipes Inscrites",
-    "paperSize": "Format de Papier",
-    "paperSizeOptions": {
-      "letter": "US Letter",
-      "tabloid": "US Tabloid",
-      "a4": "A4",
-      "a3": "A3"
-    },
     "logo": "Logo",
     "logoHint": "PNG ou JPEG, jusqu'à 2 Mo. Imprimé en haut à droite de chaque PDF.",
     "lockedAfterRounds": "Les pistes, les tours de qualification et la méthode d’appariement sont figés une fois les tours générés. Supprimez tous les tours pour les modifier."
@@ -203,6 +196,15 @@
     "fullBackup": "Sauvegarde Complète",
     "generatePDF": "Générer PDF",
     "print": "Imprimer",
+    "paperSize": "Format de Papier",
+    "paperSizeOptions": {
+      "letter": "US Letter (8,5 × 11 po)",
+      "legal": "US Legal (8,5 × 14 po)",
+      "tabloid": "US Tabloid (11 × 17 po)",
+      "13x19": "Super B (13 × 19 po)",
+      "a4": "A4 (210 × 297 mm)",
+      "a3": "A3 (297 × 420 mm)"
+    },
     "exportFailed": "Échec de l'export : {{error}}",
     "printFailed": "Échec de l'impression : {{error}}",
     "downloadJSON": "Télécharger JSON",
@@ -213,6 +215,7 @@
   "pdf": {
     "courtAssignments": "Attribution des Terrains",
     "round": "Tour",
+    "game": "Partie",
     "court": "Piste",
     "courtAbbrev": "P",
     "courtLegend": "P = numéro de piste",

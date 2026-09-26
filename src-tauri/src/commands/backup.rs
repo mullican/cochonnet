@@ -121,7 +121,7 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
             SELECT id, name, team_composition, tournament_type, start_date, end_date, director,
                    head_umpire, format, number_of_courts, number_of_qualifying_rounds,
                    has_consolante, advance_all, advance_count, bracket_size, pairing_method,
-                   region_avoidance, paper_size, logo, created_at, updated_at
+                   region_avoidance, logo, created_at, updated_at
             FROM tournaments WHERE id = ?1
             "#,
             params![tournament_id],
@@ -144,10 +144,9 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
                     bracket_size: row.get(14)?,
                     pairing_method: row.get(15)?,
                     region_avoidance: row.get::<_, i32>(16)? != 0,
-                    paper_size: row.get(17)?,
-                    logo: row.get(18)?,
-                    created_at: row.get(19)?,
-                    updated_at: row.get(20)?,
+                    logo: row.get(17)?,
+                    created_at: row.get(18)?,
+                    updated_at: row.get(19)?,
                 })
             },
         )
@@ -423,14 +422,14 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
         INSERT INTO tournaments (id, name, team_composition, tournament_type, start_date, end_date,
             director, head_umpire, format, day_type, number_of_courts, number_of_qualifying_rounds,
             has_consolante, advance_all, advance_count, bracket_size, pairing_method,
-            region_avoidance, paper_size, logo, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            region_avoidance, logo, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         "#,
         params![
             tournament_id, t.name, t.team_composition, t.tournament_type, t.start_date, t.end_date,
             t.director, t.head_umpire, t.format, t.number_of_courts, t.number_of_qualifying_rounds,
             t.has_consolante as i32, t.advance_all as i32, t.advance_count, t.bracket_size,
-            t.pairing_method, t.region_avoidance as i32, t.paper_size, t.logo,
+            t.pairing_method, t.region_avoidance as i32, t.logo,
             t.created_at, Utc::now().to_rfc3339(),
         ],
     )
@@ -801,7 +800,7 @@ mod tests {
         seed(&conn);
 
         conn.execute(
-            "UPDATE tournaments SET paper_size = 'a3', logo = 'data:image/png;base64,AAAA' WHERE id = 't1'",
+            "UPDATE tournaments SET logo = 'data:image/png;base64,AAAA' WHERE id = 't1'",
             [],
         )
         .unwrap();
@@ -816,7 +815,6 @@ mod tests {
         let backup = collect_backup(&conn, "t1").unwrap();
 
         // In the struct the export is built from...
-        assert_eq!(backup.tournament.paper_size, "a3");
         assert_eq!(
             backup.tournament.logo.as_deref(),
             Some("data:image/png;base64,AAAA")
@@ -832,7 +830,6 @@ mod tests {
         // ...and in the JSON that actually lands in the file, under the camelCase
         // names the frontend and any older build would look for.
         let json = serde_json::to_value(&backup).unwrap();
-        assert_eq!(json["tournament"]["paperSize"], "a3");
         assert_eq!(json["tournament"]["logo"], "data:image/png;base64,AAAA");
         assert_eq!(json["teams"][1]["isWithdrawn"], true);
         assert_eq!(json["teams"][0]["isWithdrawn"], false);
@@ -845,14 +842,13 @@ mod tests {
 
         // And it all survives a round trip back into a fresh tournament.
         let restored_id = restore_backup(&conn, &backup).unwrap();
-        let (paper, logo): (String, Option<String>) = conn
+        let logo: Option<String> = conn
             .query_row(
-                "SELECT paper_size, logo FROM tournaments WHERE id = ?1",
+                "SELECT logo FROM tournaments WHERE id = ?1",
                 params![restored_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(paper, "a3");
         assert_eq!(logo.as_deref(), Some("data:image/png;base64,AAAA"));
 
         let manual: i32 = conn
@@ -873,6 +869,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(still_withdrawn, 1);
+    }
+
+    /// A database from a build that stored paper size on the tournament still
+    /// takes new rows.
+    ///
+    /// `paper_size` was dropped when paper became a per-print choice, but it is
+    /// not dropped from databases that already have it - so every INSERT into
+    /// `tournaments` now omits a column that is still there, and still declared
+    /// `NOT NULL`. That only works because of its DEFAULT; an INSERT naming no
+    /// value for a NOT NULL column without one is an error, and it would be
+    /// raised on the upgrade, in the field, on the first tournament created.
+    #[test]
+    fn a_database_that_still_has_the_old_paper_size_column_accepts_new_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        seed(&conn);
+
+        // Exactly the column the retired migration used to add.
+        conn.execute(
+            "ALTER TABLE tournaments ADD COLUMN paper_size TEXT NOT NULL DEFAULT 'letter'",
+            [],
+        )
+        .unwrap();
+        // And re-running the migrations over it must not try to add it back.
+        schema::create_tables(&conn).unwrap();
+
+        let backup = collect_backup(&conn, "t1").unwrap();
+        let restored_id = restore_backup(&conn, &backup).unwrap();
+
+        let (name, paper): (String, String) = conn
+            .query_row(
+                "SELECT name, paper_size FROM tournaments WHERE id = ?1",
+                params![restored_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Cup");
+        // Nothing writes it any more, so the row carries the column default.
+        assert_eq!(paper, "letter");
     }
 
     #[test]
@@ -899,17 +933,16 @@ mod tests {
         let backup: TournamentBackup = serde_json::from_str(json).unwrap();
         let new_id = restore_backup(&conn, &backup).unwrap();
 
-        let (name, paper_size, logo): (String, String, Option<String>) = conn
+        let (name, logo): (String, Option<String>) = conn
             .query_row(
-                "SELECT name, paper_size, logo FROM tournaments WHERE id = ?1",
+                "SELECT name, logo FROM tournaments WHERE id = ?1",
                 params![new_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
         assert_eq!(name, "Legacy");
         // Fields added after the file was written have to fall back rather than
         // fail the whole import.
-        assert_eq!(paper_size, "letter");
         assert_eq!(logo, None);
 
         let withdrawn: i32 = conn

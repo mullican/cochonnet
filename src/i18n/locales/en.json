@@ -91,13 +91,6 @@
     "noTournaments": "No tournaments yet. Create your first tournament to get started.",
     "qualifyingRounds": "Qualifying Rounds",
     "teamsRegistered": "Teams Registered",
-    "paperSize": "Paper Size",
-    "paperSizeOptions": {
-      "letter": "US Letter",
-      "tabloid": "US Tabloid",
-      "a4": "A4",
-      "a3": "A3"
-    },
     "logo": "Logo",
     "logoHint": "PNG or JPEG, up to 2 MB. Printed in the upper right of every PDF.",
     "lockedAfterRounds": "Courts, qualifying rounds and pairing method are fixed once the rounds have been generated. Delete all rounds to change them."
@@ -203,6 +196,15 @@
     "fullBackup": "Full Tournament Backup",
     "generatePDF": "Generate PDF",
     "print": "Print",
+    "paperSize": "Paper Size",
+    "paperSizeOptions": {
+      "letter": "US Letter (8.5 × 11 in)",
+      "legal": "US Legal (8.5 × 14 in)",
+      "tabloid": "US Tabloid (11 × 17 in)",
+      "13x19": "Super B (13 × 19 in)",
+      "a4": "A4 (210 × 297 mm)",
+      "a3": "A3 (297 × 420 mm)"
+    },
     "exportFailed": "Export failed: {{error}}",
     "printFailed": "Printing failed: {{error}}",
     "downloadJSON": "Download JSON",
@@ -213,6 +215,7 @@
   "pdf": {
     "courtAssignments": "Court Assignments",
     "round": "Round",
+    "game": "Game",
     "court": "Court",
     "courtAbbrev": "C",
     "courtLegend": "C = court number",

@@ -11,9 +11,47 @@
 //!   `UIPrintInteractionController`, which always shows Apple's sheet, and on
 //!   iPad that sheet is a popover that must be anchored to a rect - presenting
 //!   it the iPhone way raises an exception.
+//! - Windows has no CUPS at all, so `lpstat`/`lp` are simply absent there. The
+//!   shell is the route instead: `ShellExecuteW` with the `print` verb hands
+//!   the file to whatever program owns PDFs, which is Edge on a stock Windows
+//!   11 and shows its print preview. Handlers are free to interpret the verb
+//!   their own way and some print straight to the default printer, so the
+//!   promise on Windows is "it reaches a printer", not "a panel always opens".
+//!   A handler that has no `print` verb registered falls back to `open`, which
+//!   puts the PDF on screen for the operator to print from.
 //! - Other desktops keep the CUPS `lp` route, which is all they have here.
 
 use tauri::AppHandle;
+
+/// Turns a document title into something the filesystem will take.
+///
+/// The name is built from the tournament's own, and an operator can call a
+/// tournament anything: `Doubles 2026: Spring/Fall` is an ordinary title and an
+/// illegal file name on Windows, where `\ / : * ? " < > |` are all reserved, as
+/// are trailing dots and spaces. Linux only objects to `/`, but applying the
+/// stricter rules everywhere costs nothing and keeps the spooled name the same
+/// on both.
+///
+/// Compiled on macOS as well, where nothing spools to a file, because it is
+/// pure string logic and this is the only platform the tests actually run on.
+#[cfg(desktop)]
+#[cfg_attr(all(target_os = "macos", not(test)), allow(dead_code))]
+fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if (c as u32) < 0x20 => '-',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if trimmed.is_empty() {
+        "document.pdf".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 /// Writes the PDF somewhere the platform's print path can reach it.
 #[cfg(all(desktop, not(target_os = "macos")))]
@@ -25,12 +63,12 @@ fn spool_to_temp(app: &AppHandle, file_name: &str, data: &[u8]) -> Result<std::p
         .temp_dir()
         .map_err(|e| format!("No temporary directory: {}", e))?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(file_name);
+    let path = dir.join(safe_file_name(file_name));
     std::fs::write(&path, data).map_err(|e| format!("Could not stage the PDF: {}", e))?;
     Ok(path)
 }
 
-#[cfg(all(desktop, not(target_os = "macos")))]
+#[cfg(all(desktop, not(target_os = "macos"), not(target_os = "windows")))]
 #[tauri::command]
 pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(), String> {
     use std::process::Command;
@@ -63,6 +101,89 @@ pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(),
     }
 
     Ok(())
+}
+
+/// The printer Windows would use if asked right now, if there is one.
+///
+/// `GetDefaultPrinterW` is called twice on purpose: the first call is given no
+/// buffer and fills in the length it wants, the second fills the buffer. A
+/// machine with no printers at all fails the first call and leaves the length
+/// at zero, which is the case worth catching - the shell would otherwise open
+/// the "add a printer" flow and the operator would never learn why.
+#[cfg(target_os = "windows")]
+fn default_printer() -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Graphics::Printing::GetDefaultPrinterW;
+
+    let mut len: u32 = 0;
+    unsafe {
+        let _ = GetDefaultPrinterW(None, &mut len);
+    }
+    if len == 0 {
+        return None;
+    }
+
+    let mut buf = vec![0u16; len as usize];
+    let got = unsafe { GetDefaultPrinterW(Some(PWSTR(buf.as_mut_ptr())), &mut len) };
+    if !got.as_bool() {
+        return None;
+    }
+
+    // len comes back as the character count including the trailing NUL.
+    let end = (len as usize).saturating_sub(1).min(buf.len());
+    Some(String::from_utf16_lossy(&buf[..end]))
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn print_pdf(app: AppHandle, file_name: String, data: Vec<u8>) -> Result<(), String> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    // Same courtesy as the CUPS path: say so plainly rather than letting the
+    // shell open its own dialog about it.
+    if default_printer().is_none() {
+        return Err(
+            "No default printer is set. Add one in Settings > Bluetooth & devices > \
+             Printers & scanners."
+                .into(),
+        );
+    }
+
+    let path = spool_to_temp(&app, &file_name, &data)?;
+    let file = HSTRING::from(path.as_os_str());
+
+    // `print` is what the shell offers for documents; `open` is the fallback for
+    // a handler that never registered one, and puts the PDF in front of the
+    // operator to print by hand. Never SW_HIDE: a handler that answers `print`
+    // by showing a print dialog would have it hidden along with everything else.
+    let mut last = 0isize;
+    for verb in ["print", "open"] {
+        let verb = HSTRING::from(verb);
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(verb.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // ShellExecuteW is the old API that returns a fake HINSTANCE: anything
+        // above 32 means it launched, anything at or below is an error code.
+        last = result.0 as isize;
+        if last > 32 {
+            return Ok(());
+        }
+    }
+
+    Err(format!(
+        "Windows could not open the PDF to print it (shell error {}). Check that a PDF \
+         reader is installed.",
+        last
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -207,4 +328,50 @@ pub fn printing_available() -> bool {
 #[tauri::command]
 pub fn file_export_available() -> bool {
     cfg!(desktop)
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::safe_file_name;
+
+    /// The spooled name is built from the tournament's, which is free text.
+    /// `Doubles 2026: Spring/Fall` is an ordinary thing to call an event and
+    /// cannot be written to disk on Windows - the write fails with a bare OS
+    /// error and the operator is told only that printing failed.
+    #[test]
+    fn a_title_windows_would_reject_still_spools() {
+        assert_eq!(
+            safe_file_name("Doubles 2026: Spring/Fall_court_assignments.pdf"),
+            "Doubles 2026- Spring-Fall_court_assignments.pdf"
+        );
+        assert_eq!(
+            safe_file_name(r#"a\b<c>d"e|f*g?h_standings.pdf"#),
+            "a-b-c-d-e-f-g-h_standings.pdf"
+        );
+    }
+
+    /// Windows silently drops trailing dots and spaces from a file name, so a
+    /// path built with them does not name the file that ends up on disk.
+    #[test]
+    fn trailing_dots_and_spaces_come_off() {
+        assert_eq!(safe_file_name("Spring Open.  "), "Spring Open");
+        assert_eq!(safe_file_name("  Spring Open"), "Spring Open");
+    }
+
+    /// A name that sanitises away entirely still has to be something.
+    #[test]
+    fn a_name_with_nothing_left_falls_back() {
+        assert_eq!(safe_file_name("..."), "document.pdf");
+        assert_eq!(safe_file_name("   "), "document.pdf");
+    }
+
+    /// The ordinary case must pass through untouched, dots in the extension
+    /// and all.
+    #[test]
+    fn an_ordinary_name_is_left_alone() {
+        assert_eq!(
+            safe_file_name("AIO 2024 Validation_brackets.pdf"),
+            "AIO 2024 Validation_brackets.pdf"
+        );
+    }
 }

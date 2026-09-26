@@ -21,20 +21,11 @@ pub struct Tournament {
     pub bracket_size: i32,
     pub pairing_method: String,
     pub region_avoidance: bool,
-    /// Page size every PDF is laid out for: letter, tabloid, a4 or a3.
-    /// Defaulted so a backup written before the field existed still restores.
-    #[serde(default = "default_paper_size")]
-    pub paper_size: String,
     /// Optional tournament logo as a data URI, printed top-right on every PDF.
     #[serde(default)]
     pub logo: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-/// Letter, not A4: the clubs running this print on US paper.
-fn default_paper_size() -> String {
-    "letter".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,8 +49,6 @@ pub struct CreateTournamentData {
     pub bracket_size: i32,
     pub pairing_method: String,
     pub region_avoidance: bool,
-    #[serde(default = "default_paper_size")]
-    pub paper_size: String,
     #[serde(default)]
     pub logo: Option<String>,
 }

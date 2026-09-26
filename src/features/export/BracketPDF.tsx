@@ -1,5 +1,5 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import type { Tournament, Team, Bracket, BracketMatch } from '../../types';
+import type { Tournament, Team, Bracket, BracketMatch, PaperSize } from '../../types';
 import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
 import { pageProps, contentSize, PdfLogo, LOGO_BOX_COMPACT } from './pdfPage';
@@ -15,9 +15,9 @@ const MAX_MATCH_WIDTH = 150;
 const MIN_MATCH_WIDTH = 70;
 
 // What the header and the round labels take off the top before the bracket
-// starts: ~35 for the header, ~15 for the labels, and some slack so a bracket
-// sized to the rest can never spill off the bottom.
-const VERTICAL_RESERVE = 65;
+// starts: ~49 for the header and its margin, ~15 for the labels, and some slack
+// so a bracket sized to the rest can never spill off the bottom.
+const VERTICAL_RESERVE = 79;
 
 /**
  * How wide each match box can be for a bracket of this depth.
@@ -39,7 +39,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Helvetica',
   },
   header: {
-    marginBottom: 8,
+    // Deep enough that the logo clears the round labels. A 32-team bracket
+    // stretches its columns the full width of the page, so the last one's
+    // label sits directly below the logo rather than safely to its left.
+    marginBottom: 22,
     // Keeps the title clear of the logo box in the top-right corner.
     paddingRight: LOGO_BOX_COMPACT.width + 8,
   },
@@ -154,13 +157,22 @@ const styles = StyleSheet.create({
 
 interface BracketPDFProps {
   tournament: Tournament;
+  /** The sheet this run is being printed on, chosen at the print button. */
+  paperSize: PaperSize;
   teams: Team[];
   brackets: Bracket[];
   matches: BracketMatch[];
   translations: PDFTranslations;
 }
 
-export function BracketPDF({ tournament, teams, brackets, matches, translations: t }: BracketPDFProps) {
+export function BracketPDF({
+  tournament,
+  paperSize,
+  teams,
+  brackets,
+  matches,
+  translations: t,
+}: BracketPDFProps) {
   const getTeam = (teamId: string | null | undefined) =>
     teamId ? teams.find((tm) => tm.id === teamId) : undefined;
 
@@ -242,7 +254,7 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
 
   // Everything below is laid out by hand, so it has to know how big the page
   // the operator picked actually is.
-  const content = contentSize(tournament, 'landscape', PAGE_PADDING);
+  const content = contentSize(paperSize, 'landscape', PAGE_PADDING);
 
   // A bracket needs at least two entrants to have a single match, and a
   // Document with no Page at all produces a zero-page PDF - a file that some
@@ -255,7 +267,7 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
   if (drawable.length === 0) {
     return (
       <Document>
-        <Page {...pageProps(tournament, 'landscape')} style={styles.page}>
+        <Page {...pageProps(paperSize, 'landscape')} style={styles.page}>
           <View style={styles.header}>
             <PdfLogo tournament={tournament} box={LOGO_BOX_COMPACT} />
             <Text style={styles.title}>{tournament.name}</Text>
@@ -280,7 +292,7 @@ export function BracketPDF({ tournament, teams, brackets, matches, translations:
         const matchSpacingRound1 = availableHeight / firstRoundMatchCount;
 
         return (
-          <Page key={bracket.id} {...pageProps(tournament, 'landscape')} style={styles.page}>
+          <Page key={bracket.id} {...pageProps(paperSize, 'landscape')} style={styles.page}>
             <View style={styles.header}>
               <PdfLogo tournament={tournament} box={LOGO_BOX_COMPACT} />
               <Text style={styles.title}>{tournament.name}</Text>

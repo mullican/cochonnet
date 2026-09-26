@@ -182,19 +182,40 @@ Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 - `src/features/export/ExportView.tsx` - Export UI and file saving
 - Uses Tauri dialog plugin for save dialogs
 
-**Paper size and logo** are tournament settings, so every document gets them from the
-`tournament` prop it already receives:
+**Paper size is a property of the print run, not of the tournament.** Each card on the
+export page carries its own size picker, and passes the choice to the document as a
+`paperSize` prop. A 32-team bracket wants 13x19 on the same afternoon the standings want
+Letter, and the same standings go on Letter for the noticeboard and A3 for the wall — one
+stored setting could serve none of that. `ExportView` holds the three choices in state
+(keyed by document) rather than in the database, so they last as long as the operator is on
+the tab and start again at Letter next time. Note `PdfCard` is redefined on every render of
+`ExportView`, so it cannot hold that state itself.
 
-- `pageProps(tournament, orientation)` supplies `<Page size>`; the four sizes are US Letter
-  (the default), US Tabloid, A4 and A3. Never hard-code `size="A4"` again.
+- `pageProps(paperSize, orientation)` supplies `<Page size>`; the six sizes are US Letter
+  (the default), US Legal, US Tabloid, 13x19, A4 and A3. Never hard-code `size="A4"` again.
+- `PAPER_SIZES` stores **portrait dimensions, not @react-pdf's size names**. The names are
+  only a lookup into the same numbers, 13x19 has no name at all, and holding both a name and
+  a width/height invites the two to disagree. `orientation="landscape"` flips whatever it is
+  given, so portrait is the only form worth storing.
 - `BracketPDF` lays itself out by hand and so also needs `contentSize(...)`: its column width
   and row spacing are derived from the chosen page, which is what lets a deep bracket
   genuinely benefit from bigger paper instead of being squeezed to the minimum.
+- **The logo stays a tournament setting** — it identifies the event, not the print run — so
+  it is still on the tournament form and still read off the `tournament` prop.
 - `<PdfLogo tournament />` draws `tournaments.logo` (a data URI) absolutely in the top-right,
-  fitted inside a bounding box; each header reserves that much padding on its right. The
+  fitted inside a bounding box; each header reserves that much padding on its right. The box
+  is **absolutely positioned, so it pushes nothing out of its way** — its height is sized to
+  the least room any variant of that header has, which is measured, not guessed. The three
+  tight spots: the court sheet's "nothing to show" page has no game title, so its header
+  carries a `minHeight` to stop the rule riding up through the logo; and a 32-team bracket
+  stretches its columns to the page edge, putting the "Final" round label directly under the
+  logo, which is why `BracketPDF`'s header margin and `VERTICAL_RESERVE` move together. The
   upload accepts **PNG and JPEG only** — those are the formats `@react-pdf`'s `Image` can
   draw, so an SVG would silently come out blank — and caps at 2 MB, because the data URI
   travels in the database and in every backup file.
+- The court sheet numbers its pages **"Game 1"**, not "Round 1" — a round is what a bracket
+  has, and `pdf.round` is still what `BracketPDF` labels its columns with. They are separate
+  keys (`pdf.game` / `pdf.round`) for that reason.
 - With **All Teams Seeded into Brackets** on, a consolante prints as "Concours AA" rather than
   "Consolante AA": each bracket is a concours in its own right. Internally it is still
   `is_consolante`, and the on-screen labels are unchanged.
@@ -204,7 +225,9 @@ Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 Located in `src-tauri/src/db/schema.rs`:
 
 **Core Tables:**
-- `tournaments` - Tournament configuration (incl. `paper_size` and `logo`, the print settings)
+- `tournaments` - Tournament configuration (incl. `logo`, printed on every document). A
+  `paper_size` column here was retired when paper became a per-print choice; databases that
+  already have it keep it, unread, and every INSERT relies on its `DEFAULT 'letter'`
 - `teams` - Registered teams (`is_withdrawn` flags one that pulled out mid-tournament)
 - `qualifying_rounds` - Round metadata
 - `qualifying_games` - Individual game results
@@ -299,6 +322,30 @@ assert the new constraint is present, not just that the data is intact.
 - `npm run tauri dev` for development
 - `npm run tauri build` for production build
 - GitHub Actions workflow in `.github/workflows/release.yml` builds on tag push
+
+### Printing
+
+`commands/printing.rs` raises the system print path, and every platform reaches it
+differently — the module doc has the detail. The shape to keep in mind:
+
+| Platform | Route | What the operator gets |
+|---|---|---|
+| macOS | PDFKit `NSPrintOperation` | The standard print panel: printer, range, copies |
+| iPadOS | `UIPrintInteractionController` | The AirPrint sheet (anchored, or it throws on iPad) |
+| Windows | `ShellExecuteW`, `print` verb | Whatever owns PDFs — Edge shows its preview; some handlers go straight to the default printer |
+| Linux | CUPS `lp` | Silent, to the default printer |
+
+Windows has **no CUPS**, so `lpstat`/`lp` are not a fallback there — they are simply
+missing, and the command fails before it does anything. That is why the CUPS branch is
+gated `not(target_os = "windows")` as well as `not(target_os = "macos")`: anything reading
+"every desktop but macOS" as "Linux" will break Windows silently, because the code still
+compiles.
+
+`safe_file_name` guards the spooled name. A tournament title is free text and goes straight
+into a file name, and Windows rejects `\ / : * ? " < > |` and strips trailing dots and
+spaces — so `Doubles 2026: Spring/Fall` is an ordinary title that cannot be written to disk.
+It is compiled on macOS too, where nothing uses it, because that is the only platform the
+tests run on.
 
 ## Known Issues / Warnings
 

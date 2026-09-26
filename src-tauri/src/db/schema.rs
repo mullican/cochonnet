@@ -23,7 +23,6 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             bracket_size INTEGER NOT NULL DEFAULT 16,
             pairing_method TEXT NOT NULL CHECK (pairing_method IN ('swiss', 'swissHotel', 'roundRobin', 'poolPlay', 'panache')),
             region_avoidance INTEGER NOT NULL DEFAULT 0,
-            paper_size TEXT NOT NULL DEFAULT 'letter',
             logo TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -434,12 +433,13 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
     // there that an older database has not got yet would abort the whole batch
     // - silently, because it runs under `.ok()`. Rebuilding first and adding
     // the columns afterwards upgrades every schema version the same way.
-    add_column_if_missing(
-        conn,
-        "tournaments",
-        "paper_size",
-        "ALTER TABLE tournaments ADD COLUMN paper_size TEXT NOT NULL DEFAULT 'letter'",
-    );
+    //
+    // A `paper_size` column briefly lived here too, when paper was a property of
+    // the tournament rather than of a print run. It is not dropped from
+    // databases that already have it: it is `NOT NULL DEFAULT 'letter'`, so the
+    // inserts that no longer name it still succeed, and a rebuild to remove one
+    // unread column is all risk and no gain. Nothing reads it.
+    //
     // A data URI rather than a path: the logo has to survive a backup export and
     // land intact on whatever machine restores it.
     add_column_if_missing(
@@ -658,7 +658,6 @@ mod tests {
             ("qualifying_rounds", "is_final"),
             ("qualifying_games", "side1_id"),
             ("qualifying_games", "side2_id"),
-            ("tournaments", "paper_size"),
             ("tournaments", "logo"),
             ("teams", "is_withdrawn"),
             ("bracket_matches", "court_is_manual"),

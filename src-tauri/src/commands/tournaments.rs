@@ -15,7 +15,7 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
                    director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-                   pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
+                   pairing_method, region_avoidance, logo, created_at, updated_at
             FROM tournaments
             ORDER BY created_at DESC
             "#,
@@ -42,10 +42,9 @@ pub fn get_tournaments(db: State<Database>) -> Result<Vec<Tournament>, String> {
                 bracket_size: row.get(14)?,
                 pairing_method: row.get(15)?,
                 region_avoidance: row.get::<_, i32>(16)? != 0,
-                paper_size: row.get(17)?,
-                logo: row.get(18)?,
-                created_at: row.get(19)?,
-                updated_at: row.get(20)?,
+                logo: row.get(17)?,
+                created_at: row.get(18)?,
+                updated_at: row.get(19)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -65,7 +64,7 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
             SELECT id, name, team_composition, tournament_type, start_date, end_date,
                    director, head_umpire, format, number_of_courts,
                    number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-                   pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
+                   pairing_method, region_avoidance, logo, created_at, updated_at
             FROM tournaments
             WHERE id = ?1
             "#,
@@ -89,10 +88,9 @@ pub fn get_tournament(db: State<Database>, id: String) -> Result<Tournament, Str
                     bracket_size: row.get(14)?,
                     pairing_method: row.get(15)?,
                     region_avoidance: row.get::<_, i32>(16)? != 0,
-                    paper_size: row.get(17)?,
-                    logo: row.get(18)?,
-                    created_at: row.get(19)?,
-                    updated_at: row.get(20)?,
+                    logo: row.get(17)?,
+                    created_at: row.get(18)?,
+                    updated_at: row.get(19)?,
                 })
             },
         )
@@ -117,8 +115,8 @@ pub fn create_tournament(
             id, name, team_composition, tournament_type, start_date, end_date,
             director, head_umpire, format, day_type, number_of_courts,
             number_of_qualifying_rounds, has_consolante, advance_all, advance_count, bracket_size,
-            pairing_method, region_avoidance, paper_size, logo, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            pairing_method, region_avoidance, logo, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'single', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         "#,
         params![
             id,
@@ -138,7 +136,6 @@ pub fn create_tournament(
             data.bracket_size,
             data.pairing_method,
             if data.region_avoidance { 1 } else { 0 },
-            data.paper_size,
             data.logo,
             now,
             now,
@@ -168,7 +165,6 @@ pub fn create_tournament(
         bracket_size: data.bracket_size,
         pairing_method: data.pairing_method,
         region_avoidance: data.region_avoidance,
-        paper_size: data.paper_size,
         logo: data.logo,
         created_at: now.clone(),
         updated_at: now,
@@ -265,9 +261,8 @@ pub fn update_tournament(
             bracket_size = ?15,
             pairing_method = ?16,
             region_avoidance = ?17,
-            paper_size = ?18,
-            logo = ?19,
-            updated_at = ?20
+            logo = ?18,
+            updated_at = ?19
         WHERE id = ?1
         "#,
         params![
@@ -288,7 +283,6 @@ pub fn update_tournament(
             data.bracket_size,
             data.pairing_method,
             if data.region_avoidance { 1 } else { 0 },
-            data.paper_size,
             data.logo,
             now,
         ],

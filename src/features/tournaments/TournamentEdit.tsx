@@ -70,7 +70,6 @@ export function TournamentEdit() {
         bracketSize: data.bracketSize,
         pairingMethod: data.pairingMethod,
         regionAvoidance: data.regionAvoidance,
-        paperSize: data.paperSize,
         logo: data.logo,
       } as any);
       navigate(`/tournaments/${id}`);
@@ -130,7 +129,6 @@ export function TournamentEdit() {
           bracketSize: currentTournament.bracketSize,
           pairingMethod: currentTournament.pairingMethod,
           regionAvoidance: currentTournament.regionAvoidance,
-          paperSize: currentTournament.paperSize,
           logo: currentTournament.logo,
         }}
         onSubmit={handleSubmit}

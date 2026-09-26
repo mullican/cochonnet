@@ -1,5 +1,8 @@
 export interface PDFTranslations {
+  /** Bracket round labels. The court sheet numbers its pages `game` instead. */
   round: string;
+  /** What one pass of the field is called on the court sheet: "Game 3". */
+  game: string;
   court: string;
   vs: string;
   /** Short prefix on a bracket's court cell, e.g. "C" for court 7 -> "C7". */

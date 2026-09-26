@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { Button, Input, Select, SelectItem, Card, CardContent, CardFooter } from '../../components/ui';
-import type { TournamentFormData, PaperSize } from '../../types';
-import { PAPER_SIZE_OPTIONS } from '../export/pdfPage';
+import type { TournamentFormData } from '../../types';
 
 interface TournamentFormProps {
   defaultValues?: Partial<TournamentFormData>;
@@ -46,7 +45,6 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
       bracketSize: 16,
       pairingMethod: 'swiss',
       regionAvoidance: false,
-      paperSize: 'letter',
       logo: null,
       ...defaultValues,
     },
@@ -238,20 +236,10 @@ export function TournamentForm({ defaultValues, onSubmit, onCancel, isLoading, h
             ))}
           </div>
 
-          {/* Printing: what the PDFs are laid out for, and what tops them. */}
+          {/* What tops every PDF. Paper size is not here: it is chosen per
+              document on the Export tab, since one tournament's bracket and its
+              standings rarely want the same sheet. */}
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 pt-2">
-            <Select
-              label={t('tournaments.paperSize')}
-              value={watch('paperSize')}
-              onValueChange={(v) => setValue('paperSize', v as PaperSize)}
-            >
-              {PAPER_SIZE_OPTIONS.map((size) => (
-                <SelectItem key={size} value={size}>
-                  {t(`tournaments.paperSizeOptions.${size}`)}
-                </SelectItem>
-              ))}
-            </Select>
-
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-700">
                 {t('tournaments.logo')}

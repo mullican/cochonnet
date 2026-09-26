@@ -35,7 +35,6 @@ export function TournamentCreate() {
         bracketSize: data.bracketSize,
         pairingMethod: data.pairingMethod,
         regionAvoidance: data.regionAvoidance,
-        paperSize: data.paperSize,
         logo: data.logo,
       } as any);
       navigate(`/tournaments/${tournament.id}`);

@@ -3,8 +3,12 @@ export type TournamentType = 'regional' | 'national' | 'open' | 'club';
 export type TournamentFormat = 'single' | 'double' | 'triple';
 export type PairingMethod = 'swiss' | 'swissHotel' | 'roundRobin' | 'poolPlay' | 'panache';
 export type BracketSize = 4 | 8 | 16 | 32;
-/** Page size every PDF for this tournament is laid out for. */
-export type PaperSize = 'letter' | 'tabloid' | 'a4' | 'a3';
+/**
+ * Page size a document can be printed on. Chosen per document at print time,
+ * not stored on the tournament: a deep bracket wants 13x19 on the same day the
+ * standings want Letter.
+ */
+export type PaperSize = 'letter' | 'legal' | 'tabloid' | '13x19' | 'a4' | 'a3';
 
 export interface Tournament {
   id: string;
@@ -24,7 +28,6 @@ export interface Tournament {
   bracketSize: BracketSize;
   pairingMethod: PairingMethod;
   regionAvoidance: boolean;
-  paperSize: PaperSize;
   /** Data URI of the tournament logo, printed top-right on every PDF. */
   logo: string | null;
   createdAt: string;
@@ -167,7 +170,6 @@ export interface TournamentFormData {
   bracketSize: number;
   pairingMethod: PairingMethod;
   regionAvoidance: boolean;
-  paperSize: PaperSize;
   logo: string | null;
 }
 

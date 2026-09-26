@@ -1,5 +1,5 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import type { Tournament, Team, QualifyingRound, GameWithTeams } from '../../types';
+import type { Tournament, Team, QualifyingRound, GameWithTeams, PaperSize } from '../../types';
 import { formatTeamLabel, formatPanacheSideLabel } from '../../lib/utils';
 import type { PDFTranslations } from './pdfTranslations';
 import { pageProps, PdfLogo, LOGO_BOX } from './pdfPage';
@@ -14,8 +14,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: '#000',
     paddingBottom: 8,
-    // Keeps the round title clear of the logo box in the top-right corner.
+    // Keeps the game title clear of the logo box in the top-right corner.
     paddingRight: LOGO_BOX.width + 10,
+    // The "nothing to show" page has no game title, so its header is a good
+    // deal shorter than the others - short enough that the rule below it would
+    // otherwise cut straight through the logo, which is absolutely positioned
+    // and pushes nothing down. This holds the rule under the logo instead.
+    minHeight: LOGO_BOX.height + 8,
   },
   tournamentName: {
     fontSize: 14,
@@ -90,6 +95,8 @@ const styles = StyleSheet.create({
 
 interface CourtAssignmentsPDFProps {
   tournament: Tournament;
+  /** The sheet this run is being printed on, chosen at the print button. */
+  paperSize: PaperSize;
   teams: Team[];
   rounds: QualifyingRound[];
   games: GameWithTeams[];
@@ -100,6 +107,7 @@ interface CourtAssignmentsPDFProps {
 
 export function CourtAssignmentsPDF({
   tournament,
+  paperSize,
   teams,
   rounds,
   games,
@@ -128,7 +136,7 @@ export function CourtAssignmentsPDF({
       {sortedRounds.length === 0 && (
         // No rounds means no pages, and a zero-page PDF is a file some viewers
         // will not open and a printer cannot take.
-        <Page {...pageProps(tournament)} style={styles.page}>
+        <Page {...pageProps(paperSize)} style={styles.page}>
           <View style={styles.header}>
             <PdfLogo tournament={tournament} />
             <Text style={styles.tournamentName}>{tournament.name}</Text>
@@ -143,13 +151,15 @@ export function CourtAssignmentsPDF({
         const roundSitouts = sitouts?.[round.id] ?? [];
 
         return (
-          <Page key={round.id} {...pageProps(tournament)} style={styles.page} wrap>
+          <Page key={round.id} {...pageProps(paperSize)} style={styles.page} wrap>
             <View style={styles.header} fixed>
               <PdfLogo tournament={tournament} />
               <Text style={styles.tournamentName}>{tournament.name}</Text>
               <Text style={styles.subtitle}>{t.courtAssignments}</Text>
               <Text style={styles.roundTitle}>
-                {round.isFinal ? t.final : `${t.round} ${round.roundNumber}`}
+                {/* The operator's word for one pass of the whole field is a
+                    game, not a round - a round is what a bracket has. */}
+                {round.isFinal ? t.final : `${t.game} ${round.roundNumber}`}
               </Text>
             </View>
 

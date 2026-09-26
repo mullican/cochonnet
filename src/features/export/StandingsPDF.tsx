@@ -1,5 +1,5 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import type { Tournament, Team, TeamStanding } from '../../types';
+import type { Tournament, Team, TeamStanding, PaperSize } from '../../types';
 import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
 import { pageProps, PdfLogo, LOGO_BOX } from './pdfPage';
@@ -75,12 +75,20 @@ const styles = StyleSheet.create({
 
 interface StandingsPDFProps {
   tournament: Tournament;
+  /** The sheet this run is being printed on, chosen at the print button. */
+  paperSize: PaperSize;
   teams: Team[];
   standings: TeamStanding[];
   translations: PDFTranslations;
 }
 
-export function StandingsPDF({ tournament, teams, standings, translations: t }: StandingsPDFProps) {
+export function StandingsPDF({
+  tournament,
+  paperSize,
+  teams,
+  standings,
+  translations: t,
+}: StandingsPDFProps) {
   const getTeam = (teamId: string) => teams.find((team) => team.id === teamId);
 
   // Mirror the on-screen column matrix in StandingsTable: only show the tiebreaker
@@ -108,7 +116,7 @@ export function StandingsPDF({ tournament, teams, standings, translations: t }: 
 
   return (
     <Document>
-      <Page {...pageProps(tournament)} style={styles.page}>
+      <Page {...pageProps(paperSize)} style={styles.page}>
         <View style={styles.header}>
           <PdfLogo tournament={tournament} />
           <Text style={styles.title}>{tournament.name}</Text>

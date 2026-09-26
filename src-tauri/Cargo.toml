@@ -42,3 +42,15 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSData", "NSString"] }
 objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"] }
 objc2-pdf-kit = { version = "0.3", features = ["PDFDocument", "objc2-app-kit"] }
+
+# Windows has no CUPS, so printing goes through the shell instead: ShellExecuteW
+# for the print verb, GetDefaultPrinterW to check there is somewhere to send it.
+# `windows` is already in the graph at this version via tauri, so only the
+# feature set here is new.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Printing",
+] }

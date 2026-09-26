@@ -5,12 +5,21 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile, remove, exists } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { useTournamentStore } from '../../stores/tournamentStore';
-import { Button, Card, CardContent, CardHeader, CardTitle } from '../../components/ui';
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Select,
+  SelectItem,
+} from '../../components/ui';
 import { CourtAssignmentsPDF } from './CourtAssignmentsPDF';
 import { StandingsPDF } from './StandingsPDF';
 import { BracketPDF } from './BracketPDF';
+import { PAPER_SIZE_OPTIONS, DEFAULT_PAPER_SIZE } from './pdfPage';
 import type { PDFTranslations } from './pdfTranslations';
-import type { BracketMatch, GameWithTeams, Team } from '../../types';
+import type { BracketMatch, GameWithTeams, PaperSize, Team } from '../../types';
 
 interface ExportViewProps {
   tournamentId: string;
@@ -21,6 +30,9 @@ interface PdfJob {
   build: () => Parameters<typeof pdf>[0] | Promise<Parameters<typeof pdf>[0]>;
   filename: string;
 }
+
+/** The documents on this page, each of which picks its own paper. */
+type DocumentKey = 'courtAssignments' | 'standings' | 'brackets';
 
 export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   const { t } = useTranslation();
@@ -35,6 +47,16 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
 
   const [error, setError] = useState<string | null>(null);
 
+  // Paper is chosen per document rather than per tournament: a 32-team bracket
+  // wants 13x19 on the same afternoon the standings want Letter. Held here and
+  // not inside PdfCard, which is redefined on every render and so cannot keep
+  // state of its own.
+  const [paperSizes, setPaperSizes] = useState<Record<DocumentKey, PaperSize>>({
+    courtAssignments: DEFAULT_PAPER_SIZE,
+    standings: DEFAULT_PAPER_SIZE,
+    brackets: DEFAULT_PAPER_SIZE,
+  });
+
   // What this build can actually do. iPadOS has no "save it where you like", so
   // it offers printing in place of export; macOS offers both.
   const [canExport, setCanExport] = useState(true);
@@ -48,6 +70,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
   // Get PDF translations from current language
   const pdfTranslations: PDFTranslations = useMemo(() => ({
     round: t('pdf.round'),
+    game: t('pdf.game'),
     court: t('pdf.court'),
     vs: t('pdf.vs'),
     courtAbbrev: t('pdf.courtAbbrev'),
@@ -186,12 +209,13 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     }
   };
 
-  const courtAssignmentsJob = (): PdfJob | null =>
+  const courtAssignmentsJob = (paperSize: PaperSize): PdfJob | null =>
     currentTournament && {
       filename: `${currentTournament.name}_court_assignments.pdf`,
       build: async () => (
         <CourtAssignmentsPDF
           tournament={currentTournament}
+          paperSize={paperSize}
           teams={teams}
           rounds={qualifyingRounds}
           games={await fetchAllGames()}
@@ -201,12 +225,13 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       ),
     };
 
-  const standingsJob = (): PdfJob | null =>
+  const standingsJob = (paperSize: PaperSize): PdfJob | null =>
     currentTournament && {
       filename: `${currentTournament.name}_standings.pdf`,
       build: () => (
         <StandingsPDF
           tournament={currentTournament}
+          paperSize={paperSize}
           teams={teams}
           standings={standings}
           translations={pdfTranslations}
@@ -214,12 +239,13 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
       ),
     };
 
-  const bracketsJob = (): PdfJob | null =>
+  const bracketsJob = (paperSize: PaperSize): PdfJob | null =>
     currentTournament && {
       filename: `${currentTournament.name}_brackets.pdf`,
       build: async () => (
         <BracketPDF
           tournament={currentTournament}
+          paperSize={paperSize}
           teams={teams}
           brackets={brackets}
           matches={await fetchAllBracketMatches()}
@@ -259,52 +285,81 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
     }
   };
 
-  /** One document, offered through whichever actions this platform supports. */
+  /**
+   * One document, on the paper picked for it, offered through whichever actions
+   * this platform supports.
+   *
+   * The paper size sits beside the buttons rather than in the tournament's
+   * settings because it is a property of this print run, not of the event: the
+   * same standings go on Letter for the noticeboard and on A3 for the wall.
+   */
   const PdfCard = ({
     title,
     description,
+    docKey,
     job,
     disabled,
   }: {
     title: string;
     description: string;
-    job: () => PdfJob | null;
+    docKey: DocumentKey;
+    job: (paperSize: PaperSize) => PdfJob | null;
     disabled: boolean;
-  }) => (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-gray-500 mb-4">{description}</p>
-        <div className="flex flex-wrap gap-2">
-          {canExport && (
-            <Button
-              onClick={() => {
-                const pdfJob = job();
-                if (pdfJob) exportPdf(pdfJob);
-              }}
+  }) => {
+    const paperSize = paperSizes[docKey];
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-500 mb-4">{description}</p>
+          <div className="mb-4 max-w-[14rem]">
+            <Select
+              label={t('export.paperSize')}
+              value={paperSize}
+              onValueChange={(v) =>
+                setPaperSizes((current) => ({ ...current, [docKey]: v as PaperSize }))
+              }
               disabled={disabled || busy}
             >
-              {busy ? t('common.loading') : t('export.generatePDF')}
-            </Button>
-          )}
-          {canPrint && (
-            <Button
-              variant="secondary"
-              onClick={() => {
-                const pdfJob = job();
-                if (pdfJob) printPdf(pdfJob);
-              }}
-              disabled={disabled || busy}
-            >
-              {busy ? t('common.loading') : t('export.print')}
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+              {PAPER_SIZE_OPTIONS.map((size) => (
+                <SelectItem key={size} value={size}>
+                  {t(`export.paperSizeOptions.${size}`)}
+                </SelectItem>
+              ))}
+            </Select>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canExport && (
+              <Button
+                onClick={() => {
+                  const pdfJob = job(paperSize);
+                  if (pdfJob) exportPdf(pdfJob);
+                }}
+                disabled={disabled || busy}
+              >
+                {busy ? t('common.loading') : t('export.generatePDF')}
+              </Button>
+            )}
+            {canPrint && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const pdfJob = job(paperSize);
+                  if (pdfJob) printPdf(pdfJob);
+                }}
+                disabled={disabled || busy}
+              >
+                {busy ? t('common.loading') : t('export.print')}
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -320,6 +375,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
         <PdfCard
           title={t('export.courtAssignments')}
           description={t('export.courtAssignmentsDescription')}
+          docKey="courtAssignments"
           job={courtAssignmentsJob}
           disabled={qualifyingRounds.length === 0}
         />
@@ -327,6 +383,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
         <PdfCard
           title={t('export.standings')}
           description={t('export.standingsDescription')}
+          docKey="standings"
           job={standingsJob}
           disabled={standings.length === 0}
         />
@@ -335,6 +392,7 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
           <PdfCard
             title={t('export.brackets')}
             description={t('export.bracketsDescription')}
+            docKey="brackets"
             job={bracketsJob}
             disabled={brackets.length === 0}
           />
