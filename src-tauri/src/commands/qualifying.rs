@@ -1050,7 +1050,15 @@ pub fn update_game_score(
 #[tauri::command]
 pub fn complete_round(db: State<Database>, round_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    complete_round_inner(&conn, &round_id)
+}
 
+/// The body of `complete_round`, separated from the Tauri state handle so it can
+/// be exercised against a plain connection - the same split `draw_final` uses.
+pub(crate) fn complete_round_inner(
+    conn: &rusqlite::Connection,
+    round_id: &str,
+) -> Result<(), String> {
     // Get tournament ID and pairing method
     let (tournament_id, pairing_method, is_final): (String, String, bool) = conn
         .query_row(
@@ -1981,6 +1989,177 @@ mod tests {
 
         let err = generate_single_round(&conn, TID, true).unwrap_err();
         assert!(err.contains("configured for 2"), "unexpected refusal: {}", err);
+    }
+
+    /// Replays the 2024 Amelia Island Open through the real scoring and ranking
+    /// code and checks the standings against the order the organizers published.
+    ///
+    /// The fixture is the tournament's own results workbook: 174 teams, five
+    /// rounds, 435 games, every pairing and score exactly as played. It is the
+    /// one test here built from a real event rather than a constructed case, so
+    /// it is what catches a scoring change that looks reasonable in isolation
+    /// and silently reorders a real field.
+    ///
+    /// The team names in the fixture are placeholders - the real entrants are
+    /// not in this repository. Nothing here reads them: teams are keyed by
+    /// number and every assertion is on the score line, so the names are
+    /// decoration and can be regenerated freely.
+    ///
+    /// Nineteen teams sit in nine groups that tie on all three ranking keys, and
+    /// the app breaks those with a random tiebreaker. So the comparison is
+    /// position-by-position on the KEYS, not on team identity: within a tie group
+    /// the keys are identical, so any permutation passes, while a team landing in
+    /// the wrong place on wins, differential or quotient still fails.
+    #[test]
+    fn the_2024_amelia_island_open_reproduces_its_published_standings() {
+        use serde_json::Value;
+
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/aio_2024.json"
+        ))
+        .expect("fixture missing");
+        let fx: Value = serde_json::from_str(&raw).unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+
+        let courts = fx["courts"].as_i64().unwrap() as i32;
+        conn.execute(
+            r#"
+            INSERT INTO tournaments (
+                id, name, team_composition, tournament_type, start_date, end_date,
+                director, head_umpire, format, day_type, number_of_courts,
+                number_of_qualifying_rounds, has_consolante, advance_all, advance_count,
+                bracket_size, pairing_method, region_avoidance, created_at, updated_at
+            ) VALUES (
+                ?1, 'AIO 2024 Replay', 'select', 'open', '2024-11-01', '2024-11-03',
+                'D', 'U', 'double', 'single', ?2, 5, 1, 1, NULL, 32,
+                'swissHotel', 0, 'now', 'now'
+            )
+            "#,
+            params![TID, courts],
+        )
+        .unwrap();
+
+        let teams = fx["teams"].as_array().unwrap();
+        for t in teams {
+            let n = t["n"].as_i64().unwrap() as i32;
+            conn.execute(
+                "INSERT INTO teams (id, tournament_id, team_number, captain, player2, is_champion, is_withdrawn, created_at)
+                 VALUES (?1, ?2, ?3, ?4, '', 0, 0, 'now')",
+                params![format!("t{}", n), TID, n, t["name"].as_str().unwrap()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO team_standings (id, tournament_id, team_id) VALUES (?1, ?2, ?3)",
+                params![format!("s{}", n), TID, format!("t{}", n)],
+            )
+            .unwrap();
+        }
+
+        // Each round is seeded with the pairings and scores as they were played,
+        // then closed through the same path the Complete Round button uses.
+        for rd in 1..=5 {
+            let round_id = format!("r{}", rd);
+            conn.execute(
+                "INSERT INTO qualifying_rounds (id, tournament_id, round_number, is_complete, is_final, created_at)
+                 VALUES (?1, ?2, ?3, 0, 0, 'now')",
+                params![round_id, TID, rd],
+            )
+            .unwrap();
+
+            for (i, g) in fx["games"][rd.to_string()].as_array().unwrap().iter().enumerate() {
+                let g = g.as_array().unwrap();
+                let (court, t1, s1, t2, s2) = (
+                    g[0].as_i64().unwrap() as i32,
+                    g[1].as_i64().unwrap() as i32,
+                    g[2].as_i64().unwrap() as i32,
+                    g[3].as_i64().unwrap() as i32,
+                    g[4].as_i64().unwrap() as i32,
+                );
+                conn.execute(
+                    "INSERT INTO qualifying_games (id, round_id, court_number, team1_id, team2_id,
+                        team1_score, team2_score, is_bye) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+                    params![format!("g{}-{}", rd, i), round_id, court,
+                            format!("t{}", t1), format!("t{}", t2), s1, s2],
+                )
+                .unwrap();
+            }
+
+            complete_round_inner(&conn, &round_id).unwrap();
+        }
+
+        // Every team's own score line must match the workbook exactly.
+        let mut expected: HashMap<i32, (i32, i32, i32, i32, i32)> = HashMap::new();
+        for t in teams {
+            expected.insert(
+                t["n"].as_i64().unwrap() as i32,
+                (
+                    t["rank"].as_i64().unwrap() as i32,
+                    t["w"].as_i64().unwrap() as i32,
+                    t["diff"].as_i64().unwrap() as i32,
+                    t["pf"].as_i64().unwrap() as i32,
+                    t["pa"].as_i64().unwrap() as i32,
+                ),
+            );
+        }
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT t.team_number, s.rank, s.wins, s.differential, s.points_for, s.points_against
+                 FROM team_standings s JOIN teams t ON t.id = s.team_id
+                 WHERE s.tournament_id = ?1 ORDER BY s.rank ASC",
+            )
+            .unwrap();
+        let actual: Vec<(i32, i32, i32, i32, i32, i32)> = stmt
+            .query_map(params![TID], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(actual.len(), teams.len(), "every team must be ranked");
+
+        for (num, _rank, w, diff, pf, pa) in &actual {
+            let (_, ew, ed, epf, epa) = expected[num];
+            assert_eq!(
+                (*w, *diff, *pf, *pa),
+                (ew, ed, epf, epa),
+                "team {} score line differs from the workbook",
+                num
+            );
+        }
+
+        // Ranks must be 1..n with no gaps or repeats.
+        let ranks: Vec<i32> = actual.iter().map(|a| a.1).collect();
+        assert_eq!(ranks, (1..=teams.len() as i32).collect::<Vec<_>>(), "ranks are not 1..n");
+
+        // Position-by-position on the ranking keys.
+        let key = |w: i32, diff: i32, pf: i32, pa: i32| -> (i32, i32, f64) {
+            (w, diff, if pa > 0 { pf as f64 / pa as f64 } else { f64::MAX })
+        };
+        let mut order: Vec<usize> = (0..teams.len()).collect();
+        order.sort_by_key(|&i| expected[&(teams[i]["n"].as_i64().unwrap() as i32)].0);
+        let published: Vec<(i32, i32, f64)> = order
+            .iter()
+            .map(|&i| {
+                let (_, w, d, pf, pa) = expected[&(teams[i]["n"].as_i64().unwrap() as i32)];
+                (w, d, if pa > 0 { pf as f64 / pa as f64 } else { f64::MAX })
+            })
+            .collect();
+
+        for (pos, ((_, _, w, diff, pf, pa), want)) in actual.iter().zip(&published).enumerate() {
+            let got = key(*w, *diff, *pf, *pa);
+            assert_eq!(got.0, want.0, "position {}: wins differ from the published order", pos + 1);
+            assert_eq!(got.1, want.1, "position {}: differential differs", pos + 1);
+            assert!(
+                (got.2 - want.2).abs() < 1e-9,
+                "position {}: point quotient differs ({} vs {})",
+                pos + 1, got.2, want.2
+            );
+        }
     }
 
     /// A court is a plan until the game is played and a record afterwards.

@@ -81,7 +81,7 @@ Key points:
   bracket results don't.
 - **The scheduler** (`solve_panache_schedule` in `commands/panache.rs`) is a pure function:
   randomized greedy with restarts plus local search, over a weighted cost function. Constraints
-  are costs, not filters, because MELEE.md phrases each as "unless unavoidable". Weights, in
+  are costs, not filters, because rules phrased each as "unless unavoidable". Weights, in
   order: champions sharing a team (1000) > repeated teammates (100) > a non-champion who never
   meets a champion (50) > repeated opponents (10) > sit-out imbalance (5).
 
