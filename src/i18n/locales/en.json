@@ -142,6 +142,7 @@
     "noGamesMatch": "No games match that search.",
     "score": "Score",
     "completeRound": "Complete Round",
+    "completingRound": "Completing…",
     "completeRoundMissingScores": "Enter a score for every game before completing the round.",
     "standings": "Standings",
     "rank": "Rank",
@@ -267,5 +268,13 @@
     "positiveNumber": "Must be a positive number",
     "logoFormat": "The logo must be a PNG or JPEG image.",
     "logoTooLarge": "The logo must be smaller than 2 MB."
+  },
+  "demo": {
+    "armed": "Demo mode",
+    "fillHint": "{{combo}} fills unscored games with random scores",
+    "exitHint": "{{combo}} to leave demo mode",
+    "filledGames": "Filled {{count}} games",
+    "filledMatches": "Filled {{count}} matches",
+    "nothingToFill": "Nothing here is waiting for a score"
   }
 }

@@ -15,6 +15,8 @@ import {
   TeamLabel,
 } from '../../components/ui';
 import type { BracketMatch } from '../../types';
+import { randomScores, useShortcut } from '../demo';
+import { useDemoStore } from '../../stores/demoStore';
 
 interface BracketDisplayProps {
   bracketId: string;
@@ -49,6 +51,8 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   // out - it is where the wave is defined.
   const [clashing, setClashing] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
+  const demoArmed = useDemoStore((state) => state.armed);
+  const reportDemo = useDemoStore((state) => state.report);
 
   const tournamentId = currentTournament?.id;
 
@@ -125,6 +129,36 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   // The dialog is worth opening if either half of it is live.
   const canOpenMatch = (match: BracketMatch) =>
     canEditMatch(match) || canEditCourt(match);
+
+  /**
+   * Scores every match in this bracket that is ready to be played, which is
+   * exactly one wave: `canEditMatch` requires both teams, so the next round's
+   * matches only become fillable once these results have advanced into them.
+   * Pressing again walks the bracket down one round at a time, the way the real
+   * thing progresses.
+   */
+  const handleDemoFill = async () => {
+    const ready = bracketMatches.filter(
+      (match) =>
+        canEditMatch(match) && match.team1Score === null && match.team2Score === null
+    );
+
+    if (ready.length === 0) {
+      reportDemo(t('demo.nothingToFill'));
+      return;
+    }
+
+    // Strictly sequential: every result re-runs the court draw for the wave, so
+    // these cannot be fired off in parallel.
+    for (const match of ready) {
+      const result = randomScores();
+      await updateMatchScore(match.id, result.team1, result.team2);
+    }
+    await refreshConflicts();
+    reportDemo(t('demo.filledMatches', { count: ready.length }));
+  };
+
+  useShortcut('KeyR', handleDemoFill, demoArmed);
 
   const handleMatchClick = (match: BracketMatch) => {
     if (!canOpenMatch(match)) return;

@@ -9,6 +9,8 @@ import {
   TeamLabel,
 } from '../../components/ui';
 import type { GameWithTeams, PanacheSide, Team } from '../../types';
+import { randomScores, useShortcut } from '../demo';
+import { useDemoStore } from '../../stores/demoStore';
 
 interface RoundGamesProps {
   roundId: string;
@@ -36,8 +38,11 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const [courtDrafts, setCourtDrafts] = useState<Record<string, string>>({});
   const [courtSaveError, setCourtSaveError] = useState<string | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const demoArmed = useDemoStore((state) => state.armed);
+  const reportDemo = useDemoStore((state) => state.report);
 
   useEffect(() => {
     // Reset scores when switching rounds
@@ -45,6 +50,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     setCourtDrafts({});
     setCourtSaveError(null);
     setCompleteError(null);
+    setCompleting(false);
     setSearch('');
     setInitialLoading(true);
     fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
@@ -279,6 +285,21 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   };
 
   const handleCompleteRound = async () => {
+    // Saving the scores takes one round-trip per game, which on a 67-game round
+    // is a visible pause with no feedback - long enough for a second click to
+    // land and complete the round twice. Both halves of that are fixed: the
+    // button goes disabled below, and `complete_round` refuses to apply a round
+    // it has already applied.
+    if (completing || isComplete) return;
+    setCompleting(true);
+    try {
+      await completeRoundInner();
+    } finally {
+      setCompleting(false);
+    }
+  };
+
+  const completeRoundInner = async () => {
     const allGamesScored = qualifyingGames.every((game) => {
       if (game.isBye) return true;
       const gameScores = scores[game.id];
@@ -307,6 +328,52 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       setCompleteError(String(error));
     }
   };
+
+  /**
+   * Fills every unscored game in this round with an invented but plausible
+   * result, so a demo can walk a tournament through without typing hundreds of
+   * scores. Armed from the badge; see `src/features/demo`.
+   *
+   * It fills the whole round rather than only the games the search box is
+   * showing, because a round cannot be completed until every game has a score -
+   * filling the filtered subset would leave the demo stuck.
+   */
+  const handleDemoFill = async () => {
+    const unscored = qualifyingGames.filter((game) => {
+      // A bye already carries its 13-7; there is nothing to invent.
+      if (game.isBye) return false;
+      // Never overwrite: a score already saved, or typed and not yet blurred,
+      // belongs to the operator.
+      if (game.team1Score !== null || game.team2Score !== null) return false;
+      const typed = scores[game.id];
+      if (typed && (typed.team1 !== '' || typed.team2 !== '')) return false;
+      return true;
+    });
+
+    if (unscored.length === 0) {
+      reportDemo(t('demo.nothingToFill'));
+      return;
+    }
+
+    const drawn = new Map(unscored.map((game) => [game.id, randomScores()]));
+    setScores((prev) => {
+      const next = { ...prev };
+      drawn.forEach((result, gameId) => {
+        next[gameId] = { team1: String(result.team1), team2: String(result.team2) };
+      });
+      return next;
+    });
+
+    // Sequential: each call takes the database lock, and a demo of 60-odd games
+    // is still faster than the operator can see.
+    for (const [gameId, result] of drawn) {
+      await updateGameScore(gameId, result.team1, result.team2);
+    }
+    reportDemo(t('demo.filledGames', { count: drawn.size }));
+  };
+
+  // A completed round has nothing to fill, and its inputs are already disabled.
+  useShortcut('KeyR', handleDemoFill, demoArmed && !isComplete);
 
   if (initialLoading) {
     return <div className="text-center py-4 text-gray-500">{t('common.loading')}</div>;
@@ -351,8 +418,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
           })}
         </span>
         {!isComplete && (
-          <Button className="ml-auto" onClick={handleCompleteRound}>
-            {t('pairing.completeRound')}
+          <Button className="ml-auto" onClick={handleCompleteRound} disabled={completing}>
+            {completing ? t('pairing.completingRound') : t('pairing.completeRound')}
           </Button>
         )}
       </div>

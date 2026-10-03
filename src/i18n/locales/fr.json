@@ -142,6 +142,7 @@
     "noGamesMatch": "Aucune partie ne correspond à cette recherche.",
     "score": "Score",
     "completeRound": "Terminer le Tour",
+    "completingRound": "Finalisation…",
     "completeRoundMissingScores": "Saisissez un score pour chaque partie avant de terminer la ronde.",
     "standings": "Classement",
     "rank": "Rang",
@@ -267,5 +268,13 @@
     "positiveNumber": "Doit être un nombre positif",
     "logoFormat": "Le logo doit être une image PNG ou JPEG.",
     "logoTooLarge": "Le logo doit faire moins de 2 Mo."
+  },
+  "demo": {
+    "armed": "Mode démo",
+    "fillHint": "{{combo}} remplit les parties sans score au hasard",
+    "exitHint": "{{combo}} pour quitter le mode démo",
+    "filledGames": "{{count}} parties remplies",
+    "filledMatches": "{{count}} matchs remplis",
+    "nothingToFill": "Aucune partie n’attend de score ici"
   }
 }

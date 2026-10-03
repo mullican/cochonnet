@@ -1,6 +1,7 @@
 import { Link, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Select, SelectItem } from './ui';
+import { DemoBadge } from '../features/demo';
 
 export function Layout() {
   const { i18n } = useTranslation();
@@ -86,6 +87,7 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+      <DemoBadge />
     </div>
   );
 }

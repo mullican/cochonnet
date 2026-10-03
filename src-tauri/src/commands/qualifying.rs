@@ -1065,18 +1065,39 @@ pub(crate) fn complete_round_inner(
     round_id: &str,
 ) -> Result<(), String> {
     // Get tournament ID and pairing method
-    let (tournament_id, pairing_method, is_final): (String, String, bool) = conn
-        .query_row(
+    let (tournament_id, pairing_method, is_final, already_complete): (String, String, bool, bool) =
+        conn.query_row(
             r#"
-            SELECT qr.tournament_id, t.pairing_method, qr.is_final
+            SELECT qr.tournament_id, t.pairing_method, qr.is_final, qr.is_complete
             FROM qualifying_rounds qr
             JOIN tournaments t ON qr.tournament_id = t.id
             WHERE qr.id = ?1
             "#,
             params![round_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i32>(2)? != 0)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get::<_, i32>(2)? != 0,
+                    row.get::<_, i32>(3)? != 0,
+                ))
+            },
         )
         .map_err(|e| e.to_string())?;
+
+    // Completing a round *adds* each result to a running total, so doing it
+    // twice silently doubles that round: every winner in it gains a second win
+    // and the whole field's points inflate, which reads as an impossible
+    // standings table (six wins from five rounds) with nothing in the games to
+    // explain it. The round being complete already is the one state that must
+    // never apply again, so this is the guard, not the caller's care: a
+    // double-clicked button, a retried command or a replayed backup all arrive
+    // here. "Complete this round" is satisfied by it already being complete, so
+    // this succeeds rather than erroring - there is nothing for an operator to
+    // act on.
+    if already_complete {
+        return Ok(());
+    }
 
     // The panache final names the champions; it does not reopen the qualifying
     // standings, the same way bracket results don't feed back into them.
@@ -1996,6 +2017,49 @@ mod tests {
         let second = generate_single_round(&conn, TID)
             .expect("swissHotel should draw ahead of the scoreboard");
         assert_eq!(second.round_number, 2);
+    }
+
+    /// Completing a round adds its results to a running total, so the one thing
+    /// that must never happen twice is the thing a double-clicked button does.
+    /// The symptom is a standings table that cannot be read as a tournament -
+    /// more wins than there were rounds - with nothing in the games to explain
+    /// it, so the guard belongs here where every caller passes.
+    #[test]
+    fn completing_a_round_twice_does_not_double_its_results() {
+        let conn = seed_round_robin(6, 3, 5);
+        let round = generate_single_round(&conn, TID).unwrap();
+
+        conn.execute(
+            "UPDATE qualifying_games SET team1_score = 13, team2_score = 7 WHERE round_id = ?1",
+            params![round.id],
+        )
+        .unwrap();
+
+        complete_round_inner(&conn, &round.id).unwrap();
+
+        let after_first: (i32, i32, i32) = conn
+            .query_row(
+                "SELECT SUM(wins), SUM(losses), SUM(points_for) FROM team_standings WHERE tournament_id = ?1",
+                params![TID],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(after_first, (3, 3, 60), "three games, 13-7 each");
+
+        // The second call has to be a no-op, not a second helping.
+        complete_round_inner(&conn, &round.id).unwrap();
+
+        let after_second: (i32, i32, i32) = conn
+            .query_row(
+                "SELECT SUM(wins), SUM(losses), SUM(points_for) FROM team_standings WHERE tournament_id = ?1",
+                params![TID],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            after_second, after_first,
+            "completing an already-complete round changed the standings"
+        );
     }
 
     /// The configured round count used to be enforced only by the loop that

@@ -154,7 +154,15 @@ passes most of the time, which is worse than no test.
   answer, so the one-at-a-time and all-at-once callers are identical
 - `next_round_depends_on_results()` - True for Swiss and Pool Play only. The one statement of
   which formats consume results; do not re-spell the method list anywhere else
-- `complete_round()` - Score processing and rank updates
+- `complete_round()` - Score processing and rank updates. **It adds, so it must never run
+  twice**: each result is `wins = wins + 1` against a running total, and a second application
+  silently doubles that round - every winner in it gains a win and the field's points inflate,
+  surfacing as a standings table with more wins than there were rounds and nothing in
+  `qualifying_games` to explain it. `complete_round_inner` returns early when the round is
+  already flagged complete, and that check is the protection: a double-clicked button, a retried
+  command and a replayed backup all arrive through it. The frontend also disables the button
+  while the call is in flight, because saving a 67-game round is one round-trip per game and the
+  pause was long enough to click through twice
 - `apply_game_result()` - Adds one result to each competitor's standing (a team, or every member of a panaché temporary team)
 
 **Key Functions in `panache.rs`:**
@@ -318,7 +326,8 @@ scheduler (sit-out rotation, no repeated teammates, champion separation and expo
 panaché database round-trip (sides persist, a shared score lands on each member), the court
 solver, round generation against a real database (withdrawal, byes, the configured-round cap,
 and both sides of the results-dependency guard — Swiss waits, Swiss Hotel draws ahead),
-bracket court assignment, the backup round-trip, and the schema migrations.
+the idempotency of `complete_round`, bracket court assignment, the backup round-trip, and the
+schema migrations.
 
 Court and bracket tests assert the *invariant*, never the exact numbering: which game gets
 which court is the draw's business, so a test that pins the old sequential order is testing
@@ -360,6 +369,40 @@ into a file name, and Windows rejects `\ / : * ? " < > |` and strips trailing do
 spaces — so `Doubles 2026: Spring/Fall` is an ordinary title that cannot be written to disk.
 It is compiled on macOS too, where nothing uses it, because that is the only platform the
 tests run on.
+
+### Demo mode
+
+`src/features/demo/` fills invented scores in, for walking an audience through a whole
+tournament without typing several hundred results. It is **armed, not always on**:
+`Cmd/Ctrl+Shift+D` toggles it and is the only way in, nothing persists the flag (`demoStore`
+is in-memory, so every launch starts disarmed), and while it is on a loud amber badge sits in
+the corner naming the shortcut and reporting what the last fill did. That is deliberate — this
+app runs real tournaments, and a three-key press must not be able to find demo mode already
+switched on, or leave invented scores behind without saying so.
+
+`Cmd/Ctrl+Shift+R` then fills, and **only ever fills a blank**: a score already saved, or typed
+and not yet blurred, is left alone. That is what makes the feature safe rather than merely
+unlikely to misfire — it cannot overwrite an operator's work, so the worst a stray press can
+do is add results that were not there.
+
+- **Qualifying** (`RoundGames.tsx`) fills every unscored game in the round, not just the ones
+  the search box is showing: a round cannot be completed until all of its games have a score,
+  so filling the filtered subset would leave the demo stuck. It then needs **Complete Round**
+  as usual — the fill does not score the round for you.
+- **Brackets** (`BracketDisplay.tsx`) fills one wave per press. `canEditMatch` requires both
+  teams, so the next round only becomes fillable once these results have advanced into it;
+  pressing again walks down the bracket the way the real thing progresses. Updates are strictly
+  sequential because every result re-runs `assign_bracket_courts` for the wave.
+- Only one of the two is ever mounted (Radix unmounts inactive tabs, and the rounds view holds
+  a single `selectedRoundId`), so one press reaches one surface.
+
+`scoreSampler.ts` is where the scores come from, and the weights are **measured, not invented**:
+they are the observed frequencies of the 435 games of `tests/fixtures/aio_2024.json`, the same
+workbook the ranking test replays. 13-x covers 87.8% of that field; the other 12% ran out of
+time with the winner on 7-12, so a generator that only ever produces 13-x both looks wrong to
+anyone who has run an event and never exercises the ranking code's handling of a low-scoring
+win. The loser's score is drawn from the same distribution conditioned on staying under the
+winner's. The module is pure and has no test — there is no JS test runner in this repo.
 
 ## Known Issues / Warnings
 
