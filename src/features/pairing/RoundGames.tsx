@@ -35,6 +35,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
   const [courtDrafts, setCourtDrafts] = useState<Record<string, string>>({});
   const [courtSaveError, setCourtSaveError] = useState<string | null>(null);
+  const [completeError, setCompleteError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -43,6 +44,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     setScores({});
     setCourtDrafts({});
     setCourtSaveError(null);
+    setCompleteError(null);
     setSearch('');
     setInitialLoading(true);
     fetchGamesForRound(roundId).finally(() => setInitialLoading(false));
@@ -248,6 +250,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   };
 
   const handleScoreChange = (gameId: string, team: 'team1' | 'team2', value: string) => {
+    setCompleteError(null);
     setScores((prev) => ({
       ...prev,
       [gameId]: {
@@ -284,9 +287,10 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     });
 
     if (!allGamesScored) {
-      alert('Please enter scores for all games before completing the round.');
+      setCompleteError(t('pairing.completeRoundMissingScores'));
       return;
     }
+    setCompleteError(null);
 
     for (const game of qualifyingGames) {
       if (!game.isBye) {
@@ -299,7 +303,8 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
       await fetchStandings(tournamentId);
       await fetchQualifyingRounds(tournamentId);
     } catch (error) {
-      console.error('Failed to complete round:', error);
+      // A refusal from the backend was just as silent as the missing-score one.
+      setCompleteError(String(error));
     }
   };
 
@@ -345,7 +350,16 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
             total: qualifyingGames.length,
           })}
         </span>
+        {!isComplete && (
+          <Button className="ml-auto" onClick={handleCompleteRound}>
+            {t('pairing.completeRound')}
+          </Button>
+        )}
       </div>
+
+      {completeError && (
+        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">{completeError}</div>
+      )}
 
       {visibleGames.length === 0 ? (
         <Card>
@@ -447,12 +461,6 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
               </CardContent>
             </Card>
           ))}
-        </div>
-      )}
-
-      {!isComplete && (
-        <div className="flex justify-end">
-          <Button onClick={handleCompleteRound}>{t('pairing.completeRound')}</Button>
         </div>
       )}
     </div>

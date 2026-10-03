@@ -148,11 +148,15 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   );
   const canDeleteRounds = hasRounds && !hasScores;
 
-  // Swiss and Pool Play build each round from the last one's results, so they
-  // cannot be drawn ahead. The rest can be drawn either way: up front, which is
-  // what these formats are usually chosen for, or a round at a time, which is
-  // what a director does when the roster may still move.
-  const requiresRoundByRound = pairingMethod === 'swiss' || pairingMethod === 'poolPlay';
+  // Swiss and Pool Play build each round from the last one's results. That one
+  // fact has both of the consequences below: their schedule cannot be drawn
+  // ahead, and their next round cannot be drawn until the current one is scored.
+  // Every other format reshuffles without reading the scoreboard, so it can be
+  // drawn either way and a further round stays available at any time - including
+  // while the current round is still on the ground, which is what a director
+  // wants when the roster is settled and the next sheet needs printing.
+  // Mirrored by `next_round_depends_on_results` in qualifying.rs.
+  const nextRoundDependsOnResults = pairingMethod === 'swiss' || pairingMethod === 'poolPlay';
 
   // Panache ends with a single final game once every qualifying round is scored.
   const qualifyingOnlyRounds = qualifyingRounds.filter((r) => !r.isFinal);
@@ -166,13 +170,13 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   const canGenerateNextRound =
     canGeneratePairings &&
     !hasFinal &&
-    (!lastRound || lastRound.isComplete) &&
+    (!nextRoundDependsOnResults || !lastRound || lastRound.isComplete) &&
     qualifyingOnlyRounds.length < maxRounds;
 
   const selectedRound = qualifyingRounds.find((r) => r.id === selectedRoundId) || null;
 
   // Determine which generate button to show
-  const showGenerateAllButton = !hasRounds && !requiresRoundByRound && !isPanache;
+  const showGenerateAllButton = !hasRounds && !nextRoundDependsOnResults && !isPanache;
   const showGenerateNextButton = canGenerateNextRound;
   const showGeneratePanacheButton = isPanache && !hasRounds;
   const showGenerateFinalButton = isPanache && allQualifyingComplete && !hasFinal;

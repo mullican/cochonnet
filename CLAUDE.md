@@ -43,6 +43,16 @@ one at a time. The other three can be drawn either way, and `QualifyingRounds.ts
 buttons: drawing the whole schedule up front is what those formats are usually chosen for,
 while one round at a time is what a director wants when the roster may still move.
 
+That one fact — whether a format reads the scoreboard — is also what decides whether the next
+round has to **wait** for the current one. `next_round_depends_on_results()` in `qualifying.rs`
+is the single place it is stated, mirrored by `nextRoundDependsOnResults` in
+`QualifyingRounds.tsx`, and it gates both the refusal and the button. Swiss and Pool Play wait.
+The other three do not: they reshuffle against who has already met whom, and they write
+`pairing_history` and `court_history` **as they draw, not as they score**, so a round drawn
+mid-play still avoids repeat matchups and repeat courts. A director with a settled roster can
+draw and print the next sheet while the current round is still on the ground, which is the
+whole point of offering it.
+
 ### Withdrawal
 
 A team that pulls out mid-tournament cannot be deleted — its played games and its opponents'
@@ -139,8 +149,11 @@ passes most of the time, which is worse than no test.
 - `generate_pool_play_round()` - Round-specific Pool Play logic
 - `calculate_buchholz_and_ranks()` - Swiss tiebreaker calculation
 - `calculate_point_quotient_ranks()` - Point quotient tiebreaker calculation
-- `generate_single_round()` - Draws one round; `enforce_prior_complete` is set when the
-  operator asked for this one round on its own, and off when the whole schedule is drawn up front
+- `generate_single_round()` - Draws one round. It takes no "is this one round on its own" flag:
+  whether the previous round must be scored first is `next_round_depends_on_results()`'s
+  answer, so the one-at-a-time and all-at-once callers are identical
+- `next_round_depends_on_results()` - True for Swiss and Pool Play only. The one statement of
+  which formats consume results; do not re-spell the method list anywhere else
 - `complete_round()` - Score processing and rank updates
 - `apply_game_result()` - Adds one result to each competitor's standing (a team, or every member of a panaché temporary team)
 
@@ -303,8 +316,9 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 `cd src-tauri && cargo test` — the only automated tests in the repo. They cover the panaché
 scheduler (sit-out rotation, no repeated teammates, champion separation and exposure), the
 panaché database round-trip (sides persist, a shared score lands on each member), the court
-solver, round generation against a real database (withdrawal, byes, the round-by-round
-guards), bracket court assignment, the backup round-trip, and the schema migrations.
+solver, round generation against a real database (withdrawal, byes, the configured-round cap,
+and both sides of the results-dependency guard — Swiss waits, Swiss Hotel draws ahead),
+bracket court assignment, the backup round-trip, and the schema migrations.
 
 Court and bracket tests assert the *invariant*, never the exact numbering: which game gets
 which court is the draw's business, so a test that pins the old sequential order is testing

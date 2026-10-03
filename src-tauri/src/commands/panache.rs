@@ -862,20 +862,9 @@ pub fn generate_panache_round(
         ));
     }
 
-    // The round before this one has to be scored: drawing one at a time is only
-    // worth doing if each draw sees the state the previous round left behind.
-    if highest > 0 {
-        let prior_complete: bool = conn
-            .query_row(
-                "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
-                params![tournament_id, highest],
-                |row| Ok(row.get::<_, i32>(0)? != 0),
-            )
-            .map_err(|e| e.to_string())?;
-        if !prior_complete {
-            return Err("Previous round must be completed before generating the next round.".to_string());
-        }
-    }
+    // No wait for the scoreboard here: a panache draw reshuffles against who has
+    // already been whose teammate and opponent, which `fixed` below carries, and
+    // never against who won. The rounds already drawn are the whole input.
 
     let players = load_players(&conn, &tournament_id)?;
     if players.is_empty() {

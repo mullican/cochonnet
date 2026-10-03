@@ -199,10 +199,10 @@ pub fn generate_pairings(
     tournament_id: String,
 ) -> Result<QualifyingRound, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    // Drawn one round at a time, so the round before it has to be in the books:
-    // its results are what the next draw is built from, and for the formats that
-    // ignore results it is still the operator's cue that the round is over.
-    generate_single_round(&conn, &tournament_id, true)
+    // Whether the round before has to be scored first is a property of the
+    // pairing method, not of how the operator asked: see
+    // `next_round_depends_on_results`.
+    generate_single_round(&conn, &tournament_id)
 }
 
 #[tauri::command]
@@ -271,9 +271,7 @@ pub fn generate_all_qualifying_rounds(
     // Generate all remaining rounds
     let mut rounds = Vec::new();
     for _ in current_round..max_rounds {
-        // Nothing has been played yet, so the completeness check that guards
-        // round-by-round generation would stop this loop after its first pass.
-        let round = generate_single_round(&conn, &tournament_id, false)?;
+        let round = generate_single_round(&conn, &tournament_id)?;
         rounds.push(round);
     }
 
@@ -284,15 +282,22 @@ pub fn generate_all_qualifying_rounds(
     Ok(rounds)
 }
 
-/// Draws one round.
+/// Whether a format's next round is built out of the last one's results.
 ///
-/// `enforce_prior_complete` is set when the operator asked for this one round
-/// on its own; it is off when the whole schedule is being drawn up front, where
-/// by definition nothing has been played.
+/// Swiss pairs on win records and Pool Play on who won which game, so for those
+/// two the round before has to be scored before the next can be drawn. The rest
+/// reshuffle without consulting the scoreboard, and write their pairing and
+/// court history as they draw rather than as they score, so a further round can
+/// be drawn whenever the operator wants one - a director with a settled roster
+/// and a sheet to print should not have to wait for the last court to report.
+fn next_round_depends_on_results(pairing_method: &str) -> bool {
+    pairing_method == "swiss" || pairing_method == "poolPlay"
+}
+
+/// Draws one round.
 fn generate_single_round(
     conn: &rusqlite::Connection,
     tournament_id: &str,
-    enforce_prior_complete: bool,
 ) -> Result<QualifyingRound, String> {
     // Get tournament info
     let (pairing_method, region_avoidance, number_of_courts, configured_rounds): (String, bool, i32, i32) = conn
@@ -315,8 +320,8 @@ fn generate_single_round(
 
     let new_round_number = current_round + 1;
 
-    // Verify the prior round is complete before generating the next one.
-    if enforce_prior_complete && current_round > 0 {
+    // Only the formats that read the scoreboard have to wait for it.
+    if next_round_depends_on_results(&pairing_method) && current_round > 0 {
         let prior_round_complete: bool = conn
             .query_row(
                 "SELECT is_complete FROM qualifying_rounds WHERE tournament_id = ?1 AND round_number = ?2",
@@ -1858,6 +1863,10 @@ mod tests {
 
     /// A swissHotel tournament with `n` teams, all active, and no rounds yet.
     fn seed_round_robin(teams: usize, courts: i32, rounds: i32) -> Connection {
+        seed_with_method(teams, courts, rounds, "swissHotel")
+    }
+
+    fn seed_with_method(teams: usize, courts: i32, rounds: i32, method: &str) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
 
@@ -1871,10 +1880,10 @@ mod tests {
             ) VALUES (
                 ?1, 'Open', 'mixed', 'club', '2026-01-01', '2026-01-02',
                 'D', 'U', 'double', 'single', ?2, ?3, 0, 1, NULL, 16,
-                'swissHotel', 0, 'now', 'now'
+                ?4, 0, 'now', 'now'
             )
             "#,
-            params![TID, courts, rounds],
+            params![TID, courts, rounds, method],
         )
         .unwrap();
 
@@ -1918,13 +1927,13 @@ mod tests {
     fn a_withdrawn_team_is_left_out_of_later_rounds() {
         let conn = seed_round_robin(6, 3, 5);
 
-        let first = generate_single_round(&conn, TID, false).unwrap();
+        let first = generate_single_round(&conn, TID).unwrap();
         assert!(teams_in_round(&conn, &first.id).contains(&"T3".to_string()));
 
         conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
         conn.execute("UPDATE teams SET is_withdrawn = 1 WHERE id = 'T3'", []).unwrap();
 
-        let second = generate_single_round(&conn, TID, true).unwrap();
+        let second = generate_single_round(&conn, TID).unwrap();
         let playing = teams_in_round(&conn, &second.id);
         assert!(
             !playing.contains(&"T3".to_string()),
@@ -1940,7 +1949,7 @@ mod tests {
     fn an_odd_active_count_draws_a_bye() {
         let conn = seed_round_robin(6, 3, 5);
 
-        let first = generate_single_round(&conn, TID, false).unwrap();
+        let first = generate_single_round(&conn, TID).unwrap();
         let byes: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM qualifying_games WHERE round_id = ?1 AND is_bye = 1",
@@ -1953,7 +1962,7 @@ mod tests {
         conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
         conn.execute("UPDATE teams SET is_withdrawn = 1 WHERE id = 'T6'", []).unwrap();
 
-        let second = generate_single_round(&conn, TID, true).unwrap();
+        let second = generate_single_round(&conn, TID).unwrap();
         let byes: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM qualifying_games WHERE round_id = ?1 AND is_bye = 1",
@@ -1964,16 +1973,29 @@ mod tests {
         assert_eq!(byes, 1, "five active teams need a bye");
     }
 
-    /// Drawing one round at a time is only safe if the round before it is done;
-    /// this guard used to cover Swiss and Pool Play only, which was enough
-    /// while no other format could be advanced a round at a time.
+    /// Swiss pairs on win records, so its next round genuinely cannot be drawn
+    /// until the current one is scored.
     #[test]
-    fn a_round_by_round_draw_waits_for_the_previous_round() {
-        let conn = seed_round_robin(6, 3, 5);
-        generate_single_round(&conn, TID, false).unwrap();
+    fn a_results_driven_draw_waits_for_the_previous_round() {
+        let conn = seed_with_method(6, 3, 5, "swiss");
+        generate_single_round(&conn, TID).unwrap();
 
-        let err = generate_single_round(&conn, TID, true).unwrap_err();
+        let err = generate_single_round(&conn, TID).unwrap_err();
         assert!(err.contains("Previous round"), "unexpected refusal: {}", err);
+    }
+
+    /// The other formats reshuffle without reading the scoreboard, so making
+    /// them wait bought nothing and cost the director the ability to print the
+    /// next sheet while the current round is still on the ground.
+    #[test]
+    fn a_draw_that_ignores_results_does_not_wait() {
+        let conn = seed_round_robin(6, 3, 5);
+        let first = generate_single_round(&conn, TID).unwrap();
+        assert_eq!(first.round_number, 1);
+
+        let second = generate_single_round(&conn, TID)
+            .expect("swissHotel should draw ahead of the scoreboard");
+        assert_eq!(second.round_number, 2);
     }
 
     /// The configured round count used to be enforced only by the loop that
@@ -1983,11 +2005,10 @@ mod tests {
         let conn = seed_round_robin(6, 3, 2);
 
         for _ in 0..2 {
-            generate_single_round(&conn, TID, false).unwrap();
-            conn.execute("UPDATE qualifying_rounds SET is_complete = 1", []).unwrap();
+            generate_single_round(&conn, TID).unwrap();
         }
 
-        let err = generate_single_round(&conn, TID, true).unwrap_err();
+        let err = generate_single_round(&conn, TID).unwrap_err();
         assert!(err.contains("configured for 2"), "unexpected refusal: {}", err);
     }
 
@@ -2168,7 +2189,7 @@ mod tests {
     #[test]
     fn a_played_game_cannot_be_moved_to_another_court() {
         let conn = seed_round_robin(6, 3, 5);
-        let round = generate_single_round(&conn, TID, false).unwrap();
+        let round = generate_single_round(&conn, TID).unwrap();
 
         let game_id: String = conn
             .query_row(
@@ -2220,7 +2241,7 @@ mod tests {
 
         let mut seen: HashMap<String, Vec<i32>> = HashMap::new();
         for _ in 0..4 {
-            let round = generate_single_round(&conn, TID, false).unwrap();
+            let round = generate_single_round(&conn, TID).unwrap();
             let mut stmt = conn
                 .prepare(
                     "SELECT team1_id, team2_id, court_number FROM qualifying_games WHERE round_id = ?1",

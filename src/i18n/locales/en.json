@@ -142,6 +142,7 @@
     "noGamesMatch": "No games match that search.",
     "score": "Score",
     "completeRound": "Complete Round",
+    "completeRoundMissingScores": "Enter a score for every game before completing the round.",
     "standings": "Standings",
     "rank": "Rank",
     "wins": "Wins",

@@ -142,6 +142,7 @@
     "noGamesMatch": "Aucune partie ne correspond à cette recherche.",
     "score": "Score",
     "completeRound": "Terminer le Tour",
+    "completeRoundMissingScores": "Saisissez un score pour chaque partie avant de terminer la ronde.",
     "standings": "Classement",
     "rank": "Rang",
     "wins": "Victoires",
