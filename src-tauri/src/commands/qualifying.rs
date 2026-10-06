@@ -1187,6 +1187,15 @@ pub(crate) fn complete_round_inner(
         )
         .map_err(|e| e.to_string())?;
 
+    // The regulations give the head-to-head tiebreak to Round Robin and Swiss
+    // Hotel ("Rounds"). Not to Swiss System, which ranks on Buchholz, and not to
+    // Pool Play or Panache, which they do not mention - those pass None and rank
+    // exactly as they did before.
+    let head_to_head = match pairing_method.as_str() {
+        "swissHotel" | "roundRobin" => Some(HeadToHead::load(&conn, &tournament_id, round_id)?),
+        _ => None,
+    };
+
     // Calculate rankings based on pairing method
     match pairing_method.as_str() {
         "swiss" => {
@@ -1195,7 +1204,7 @@ pub(crate) fn complete_round_inner(
         }
         "swissHotel" | "roundRobin" | "poolPlay" | "panache" => {
             // These use point quotient tiebreaker
-            calculate_point_quotient_ranks(&conn, &tournament_id)?;
+            calculate_point_quotient_ranks(&conn, &tournament_id, head_to_head.as_ref())?;
         }
         _ => {
             // Default to Buchholz
@@ -1374,7 +1383,159 @@ pub(crate) fn load_side_member_ids(
     Ok(ids)
 }
 
-fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+/// The head-to-head tiebreak, as the tournament regulations phrase it: it
+/// applies "when only 2 teams are involved".
+///
+/// So the group is a win count, and the rule fires only when exactly two teams
+/// share it and they met during the qualifiers - then the winner of that game
+/// ranks ahead, before any computed tiebreaker, because they settled it on the
+/// court. Three or more teams on the same number of wins is left entirely to the
+/// existing rules, even when two of them did play.
+///
+/// That "only 2" clause is what keeps this an ordering rather than a mess. With
+/// three teams it would have to answer A beat B, B beat C, C beat A - an
+/// ordinary weekend, and a comparator that contradicts itself leaves the
+/// published table depending on the order rows came out of SQLite. Restricted to
+/// a pair there is no third team to form a cycle, and because the group is a win
+/// count - already the first sort key - a team's key is only ever compared
+/// against the one other team it can be compared against.
+///
+/// Applies to Round Robin and Swiss Hotel ("Rounds"). Not Swiss System, which
+/// ranks on Buchholz alone, and not Pool Play or Panache, which the regulations
+/// do not mention: those three pass `None` and are untouched.
+pub(crate) struct HeadToHead {
+    /// 1 for the winner of a two-way tie that was settled on court, 0 for
+    /// everyone else - including both halves of a pair that never met.
+    ahead: HashMap<String, i32>,
+}
+
+impl HeadToHead {
+    /// Reads the games whose results are already in the standings: every round
+    /// flagged complete, plus `current_round_id`, which is being completed right
+    /// now and is not flagged until after the ranking has run. Rounds drawn
+    /// ahead but not yet played are excluded - their scores are not in the
+    /// standings, so they must not sway a tiebreak either.
+    pub(crate) fn load(
+        conn: &rusqlite::Connection,
+        tournament_id: &str,
+        current_round_id: &str,
+    ) -> Result<Self, String> {
+        let mut stmt = conn
+            .prepare("SELECT team_id, wins FROM team_standings WHERE tournament_id = ?1")
+            .map_err(|e| e.to_string())?;
+
+        let mut by_wins: HashMap<i32, Vec<String>> = HashMap::new();
+        let rows = stmt
+            .query_map(params![tournament_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok());
+        for (team_id, wins) in rows {
+            by_wins.entry(wins).or_default().push(team_id);
+        }
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT g.team1_id, g.team2_id, g.team1_score, g.team2_score
+                FROM qualifying_games g
+                JOIN qualifying_rounds qr ON qr.id = g.round_id
+                WHERE qr.tournament_id = ?1
+                  AND (qr.is_complete = 1 OR qr.id = ?2)
+                  AND qr.is_final = 0
+                  AND g.is_bye = 0
+                  AND g.team1_id IS NOT NULL
+                  AND g.team2_id IS NOT NULL
+                  AND g.team1_score IS NOT NULL
+                  AND g.team2_score IS NOT NULL
+                "#,
+            )
+            .map_err(|e| e.to_string())?;
+
+        let games: Vec<(String, String, i32, i32)> = stmt
+            .query_map(params![tournament_id, current_round_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut ahead: HashMap<String, i32> = HashMap::new();
+
+        for (_, tied) in by_wins.iter().filter(|(_, tied)| tied.len() == 2) {
+            let (one, other) = (&tied[0], &tied[1]);
+            // Swiss Hotel avoids a rematch but does not forbid one, so count the
+            // meetings rather than assuming a single game. An even split settles
+            // nothing and leaves the existing rules to it.
+            let mut wins_for_one = 0;
+            let mut wins_for_other = 0;
+            for (team1, team2, score1, score2) in &games {
+                let is_this_pair = (team1 == one && team2 == other)
+                    || (team1 == other && team2 == one);
+                // A drawn game is not a petanque result; if one is ever stored it
+                // settles nothing and must not hand either side the tiebreak.
+                if !is_this_pair || score1 == score2 {
+                    continue;
+                }
+                let winner = if score1 > score2 { team1 } else { team2 };
+                if winner == one {
+                    wins_for_one += 1;
+                } else {
+                    wins_for_other += 1;
+                }
+            }
+
+            if wins_for_one > wins_for_other {
+                ahead.insert(one.clone(), 1);
+            } else if wins_for_other > wins_for_one {
+                ahead.insert(other.clone(), 1);
+            }
+        }
+
+        Ok(Self { ahead })
+    }
+
+    fn is_ahead(&self, team_id: &str) -> i32 {
+        self.ahead.get(team_id).copied().unwrap_or(0)
+    }
+}
+
+/// Orders two teams by the head-to-head key when one is in play.
+///
+/// No guard on the records is needed: the key is non-zero only inside a win
+/// count holding exactly two teams, and `wins` has already been compared by the
+/// time this runs, so the only pair whose keys can differ is that one.
+fn head_to_head_order(
+    head_to_head: Option<&HeadToHead>,
+    a: &RankRow,
+    b: &RankRow,
+) -> std::cmp::Ordering {
+    match head_to_head {
+        Some(h2h) => h2h.is_ahead(&b.team_id).cmp(&h2h.is_ahead(&a.team_id)),
+        None => std::cmp::Ordering::Equal,
+    }
+}
+
+/// One team's ranking keys. Named rather than a positional tuple because the
+/// comparators below read every field and a mis-indexed `.4` reorders a field
+/// of 174 teams without failing anything.
+struct RankRow {
+    team_id: String,
+    wins: i32,
+    differential: i32,
+    buchholz: f64,
+    fine_buchholz: f64,
+    point_quotient: f64,
+    random_tiebreaker: u64,
+}
+
+/// Swiss System ranks on Buchholz and takes no head-to-head tiebreak: the
+/// regulations apply that one to Round Robin and Swiss Hotel only.
+fn calculate_buchholz_and_ranks(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+) -> Result<(), String> {
     // Get all standings
     let mut stmt = conn
         .prepare(
@@ -1470,26 +1631,34 @@ fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str
         .map(|(id, _, _, _)| (id.clone(), rng.gen()))
         .collect();
 
-    let mut ranked: Vec<(String, i32, f64, f64, i32, u64)> = standings
+    let mut ranked: Vec<RankRow> = standings
         .iter()
-        .map(|(id, wins, diff, _)| {
-            let buchholz = buchholz_scores.get(id).copied().unwrap_or(0.0);
-            let fine_buchholz = fine_buchholz_scores.get(id).copied().unwrap_or(0.0);
-            let random_tb = random_tiebreakers.get(id).copied().unwrap_or(0);
-            (id.clone(), *wins, buchholz, fine_buchholz, *diff, random_tb)
+        .map(|(id, wins, diff, _)| RankRow {
+            team_id: id.clone(),
+            wins: *wins,
+            differential: *diff,
+            buchholz: buchholz_scores.get(id).copied().unwrap_or(0.0),
+            fine_buchholz: fine_buchholz_scores.get(id).copied().unwrap_or(0.0),
+            point_quotient: 0.0,
+            random_tiebreaker: random_tiebreakers.get(id).copied().unwrap_or(0),
         })
         .collect();
 
-    // Sort by: wins DESC → buchholz DESC → fine_buchholz DESC → differential DESC → random
+    // wins DESC → buchholz DESC → fine_buchholz DESC → differential DESC → random
     ranked.sort_by(|a, b| {
-        b.1.cmp(&a.1) // wins (descending)
-            .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)) // buchholz (descending)
-            .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal)) // fine_buchholz (descending)
-            .then(b.4.cmp(&a.4)) // differential (descending)
-            .then(b.5.cmp(&a.5)) // random tiebreaker (descending)
+        b.wins
+            .cmp(&a.wins)
+            .then(b.buchholz.partial_cmp(&a.buchholz).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                b.fine_buchholz
+                    .partial_cmp(&a.fine_buchholz)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(b.differential.cmp(&a.differential))
+            .then(b.random_tiebreaker.cmp(&a.random_tiebreaker))
     });
 
-    for (rank, (team_id, _, _, _, _, _)) in ranked.iter().enumerate() {
+    for (rank, RankRow { team_id, .. }) in ranked.iter().enumerate() {
         conn.execute(
             "UPDATE team_standings SET rank = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
             params![tournament_id, team_id, (rank + 1) as i32],
@@ -1501,8 +1670,15 @@ fn calculate_buchholz_and_ranks(conn: &rusqlite::Connection, tournament_id: &str
 }
 
 /// Calculate ranks using point quotient tiebreaker (for Swiss Hotel, Round Robin, Pool Play)
-/// Tiebreaker order: wins → differential → point_quotient → random
-pub(crate) fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+/// Tiebreaker order: wins → head-to-head → differential → point_quotient → random
+///
+/// `head_to_head` is `Some` for Round Robin and Swiss Hotel ("Rounds"), the two
+/// formats the regulations give it to. Pool Play and Panache pass `None`.
+pub(crate) fn calculate_point_quotient_ranks(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    head_to_head: Option<&HeadToHead>,
+) -> Result<(), String> {
     // Get all standings
     let mut stmt = conn
         .prepare(
@@ -1548,7 +1724,7 @@ pub(crate) fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tourna
         .collect();
 
     // Build ranked list with point quotient
-    let mut ranked: Vec<(String, i32, i32, f64, u64)> = standings
+    let mut ranked: Vec<RankRow> = standings
         .iter()
         .map(|(id, wins, diff, points_for, points_against)| {
             let point_quotient = if *points_against > 0 {
@@ -1558,20 +1734,33 @@ pub(crate) fn calculate_point_quotient_ranks(conn: &rusqlite::Connection, tourna
             } else {
                 1.0
             };
-            let random_tb = random_tiebreakers.get(id).copied().unwrap_or(0);
-            (id.clone(), *wins, *diff, point_quotient, random_tb)
+            RankRow {
+                team_id: id.clone(),
+                wins: *wins,
+                differential: *diff,
+                buchholz: 0.0,
+                fine_buchholz: 0.0,
+                point_quotient,
+                random_tiebreaker: random_tiebreakers.get(id).copied().unwrap_or(0),
+            }
         })
         .collect();
 
-    // Sort by: wins DESC → differential DESC → point_quotient DESC → random
+    // wins DESC → head-to-head → differential DESC → point_quotient DESC → random
     ranked.sort_by(|a, b| {
-        b.1.cmp(&a.1) // wins (descending)
-            .then(b.2.cmp(&a.2)) // differential (descending)
-            .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal)) // point_quotient (descending)
-            .then(b.4.cmp(&a.4)) // random tiebreaker (descending)
+        b.wins
+            .cmp(&a.wins)
+            .then_with(|| head_to_head_order(head_to_head, a, b))
+            .then(b.differential.cmp(&a.differential))
+            .then(
+                b.point_quotient
+                    .partial_cmp(&a.point_quotient)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(b.random_tiebreaker.cmp(&a.random_tiebreaker))
     });
 
-    for (rank, (team_id, _, _, _, _)) in ranked.iter().enumerate() {
+    for (rank, RankRow { team_id, .. }) in ranked.iter().enumerate() {
         conn.execute(
             "UPDATE team_standings SET rank = ?3 WHERE tournament_id = ?1 AND team_id = ?2",
             params![tournament_id, team_id, (rank + 1) as i32],
@@ -2074,6 +2263,230 @@ mod tests {
 
         let err = generate_single_round(&conn, TID).unwrap_err();
         assert!(err.contains("configured for 2"), "unexpected refusal: {}", err);
+    }
+
+    /// Plays a fixed schedule and closes each round through the same path the
+    /// Complete Round button uses.
+    ///
+    /// T1 beats T2 13-12, then loses 0-13 to T3 while T2 wins 13-0. Both finish
+    /// on one win - a win count holding exactly two teams - they met, and T1 won
+    /// it. But T1's differential is -12 against T2's +12, so differential and
+    /// head-to-head point opposite ways, and whichever rule is in force is
+    /// visible in the order.
+    fn seed_head_to_head_clash(method: &str) -> Connection {
+        let schedule = [
+            // (round, team1, score1, team2, score2)
+            (1, "T1", 13, "T2", 12),
+            (1, "T3", 13, "T4", 0),
+            (2, "T1", 0, "T3", 13),
+            (2, "T2", 13, "T4", 0),
+        ];
+        seed_played_schedule(method, 4, &schedule)
+    }
+
+    fn seed_played_schedule(
+        method: &str,
+        team_count: usize,
+        schedule: &[(i32, &str, i32, &str, i32)],
+    ) -> Connection {
+        let rounds = schedule.iter().map(|(rd, ..)| *rd).max().unwrap_or(1);
+        let conn = seed_with_method(team_count, team_count as i32 / 2, rounds, method);
+
+        for round_number in 1..=rounds {
+            let round_id = format!("r{}", round_number);
+            conn.execute(
+                "INSERT INTO qualifying_rounds (id, tournament_id, round_number, is_complete, is_final, created_at)
+                 VALUES (?1, ?2, ?3, 0, 0, 'now')",
+                params![round_id, TID, round_number],
+            )
+            .unwrap();
+
+            for (i, (rd, t1, s1, t2, s2)) in schedule.iter().enumerate() {
+                if *rd != round_number {
+                    continue;
+                }
+                conn.execute(
+                    "INSERT INTO qualifying_games (id, round_id, court_number, team1_id, team2_id,
+                        team1_score, team2_score, is_bye) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, 0)",
+                    params![format!("g{}-{}", round_number, i), round_id, t1, t2, s1, s2],
+                )
+                .unwrap();
+            }
+
+            complete_round_inner(&conn, &round_id).unwrap();
+        }
+
+        conn
+    }
+
+    fn rank_of(conn: &Connection, team_id: &str) -> i32 {
+        conn.query_row(
+            "SELECT rank FROM team_standings WHERE tournament_id = ?1 AND team_id = ?2",
+            params![TID, team_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    /// Two teams alone on a win count who met settled it on the court, so that
+    /// game outranks differential - which here points the other way.
+    #[test]
+    fn head_to_head_decides_a_two_way_tie_in_rounds() {
+        let conn = seed_head_to_head_clash("swissHotel");
+
+        assert!(
+            rank_of(&conn, "T1") < rank_of(&conn, "T2"),
+            "T1 beat T2 and the two of them are alone on one win, so T1 ranks first despite the \
+             worse differential (T1 rank {}, T2 rank {})",
+            rank_of(&conn, "T1"),
+            rank_of(&conn, "T2")
+        );
+    }
+
+    /// The regulations give the rule to Round Robin as well as Rounds.
+    #[test]
+    fn head_to_head_decides_a_two_way_tie_in_round_robin() {
+        let conn = seed_head_to_head_clash("roundRobin");
+
+        assert!(
+            rank_of(&conn, "T1") < rank_of(&conn, "T2"),
+            "Round Robin takes the head-to-head tiebreak too (T1 rank {}, T2 rank {})",
+            rank_of(&conn, "T1"),
+            rank_of(&conn, "T2")
+        );
+    }
+
+    /// Swiss System is explicitly excluded, and this is the test that holds it
+    /// out: the same games, the same two-way tie, the same disagreement, and it
+    /// still ranks on its own chain.
+    #[test]
+    fn swiss_system_ignores_head_to_head() {
+        let conn = seed_head_to_head_clash("swiss");
+
+        assert!(
+            rank_of(&conn, "T2") < rank_of(&conn, "T1"),
+            "Swiss takes no head-to-head tiebreak, so T1 stays behind T2 on the Buchholz chain \
+             (T1 rank {}, T2 rank {})",
+            rank_of(&conn, "T1"),
+            rank_of(&conn, "T2")
+        );
+    }
+
+    /// Two teams alone on a win count who never met fall through to the existing
+    /// rules, which is the other half of what the regulations say.
+    #[test]
+    fn head_to_head_is_skipped_when_the_two_never_met() {
+        // T2 and T3 both finish on one win without ever being drawn together.
+        let conn = seed_played_schedule(
+            "swissHotel",
+            4,
+            &[
+                (1, "T1", 13, "T2", 0),
+                (1, "T3", 13, "T4", 0),
+                (2, "T1", 13, "T3", 12),
+                (2, "T2", 13, "T4", 0),
+            ],
+        );
+
+        // T3 took +12 off its two games and T2 took 0, so differential decides
+        // exactly as it did before this rule existed.
+        assert!(
+            rank_of(&conn, "T3") < rank_of(&conn, "T2"),
+            "with no meeting between them, differential should still order T3 ahead of T2 \
+             (T2 rank {}, T3 rank {})",
+            rank_of(&conn, "T2"),
+            rank_of(&conn, "T3")
+        );
+    }
+
+    /// "When only 2 teams are involved" is a real limit, not a figure of speech.
+    /// Three teams on one win: T1 beat T2, so the pairwise reading would lift T1
+    /// over it, but the group is not a pair and the existing rules take the whole
+    /// group - which here means differential, putting T2 first.
+    ///
+    /// This is also what keeps the comparator honest. Head-to-head among three
+    /// teams has to be able to answer A over B, B over C and C over A, and no
+    /// ordering can; restricting it to a pair means the question never arises.
+    #[test]
+    fn head_to_head_is_skipped_when_more_than_two_teams_are_tied() {
+        // Six teams, two rounds. T1, T2 and T5 all finish on one win; T1 beat T2
+        // in round 1, and T2 carries the best differential of the three.
+        let conn = seed_played_schedule(
+            "swissHotel",
+            6,
+            &[
+                (1, "T1", 13, "T2", 12),
+                (1, "T3", 13, "T4", 0),
+                (1, "T5", 13, "T6", 1),
+                (2, "T1", 0, "T3", 13),
+                (2, "T2", 13, "T6", 0),
+                (2, "T5", 2, "T4", 13),
+            ],
+        );
+
+        for team in ["T1", "T2", "T5"] {
+            let wins: i32 = conn
+                .query_row(
+                    "SELECT wins FROM team_standings WHERE tournament_id = ?1 AND team_id = ?2",
+                    params![TID, team],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(wins, 1, "{} should be on one win for this test to mean anything", team);
+        }
+
+        assert!(
+            rank_of(&conn, "T2") < rank_of(&conn, "T1"),
+            "three teams share the win count, so head-to-head does not apply and differential \
+             orders T2 (+12) ahead of T1 (-12), even though T1 beat T2 \
+             (T1 rank {}, T2 rank {})",
+            rank_of(&conn, "T1"),
+            rank_of(&conn, "T2")
+        );
+    }
+
+    /// A result from a round drawn ahead but not yet scored into the standings
+    /// must not sway a tiebreak - the standings and the tiebreak have to be
+    /// reading the same tournament. Drawing ahead became possible when the
+    /// round-by-round guard was narrowed to the formats that consume results.
+    #[test]
+    fn a_round_that_is_not_yet_complete_does_not_count_for_head_to_head() {
+        let conn = seed_with_method(2, 1, 2, "swissHotel");
+
+        conn.execute(
+            "UPDATE team_standings SET wins = 1, losses = 1 WHERE tournament_id = ?1",
+            params![TID],
+        )
+        .unwrap();
+        // Round 2 is drawn and even scored, but never completed.
+        conn.execute(
+            "INSERT INTO qualifying_rounds (id, tournament_id, round_number, is_complete, is_final, created_at)
+             VALUES ('r2', ?1, 2, 0, 0, 'now')",
+            params![TID],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO qualifying_games (id, round_id, court_number, team1_id, team2_id,
+                team1_score, team2_score, is_bye) VALUES ('g2', 'r2', 1, 'T1', 'T2', 13, 0, 0)",
+            [],
+        )
+        .unwrap();
+
+        // Loading for a different round must not pick r2 up.
+        let h2h = HeadToHead::load(&conn, TID, "r1").unwrap();
+        assert_eq!(
+            h2h.is_ahead("T1"),
+            0,
+            "an unplayed round's score is not in the standings and must not be in the tiebreak"
+        );
+
+        // Loading while r2 is the round being closed must pick it up.
+        let h2h = HeadToHead::load(&conn, TID, "r2").unwrap();
+        assert_eq!(
+            h2h.is_ahead("T1"),
+            1,
+            "the round being completed is not flagged yet, so it has to be included by id"
+        );
     }
 
     /// Replays the 2024 Amelia Island Open through the real scoring and ranking

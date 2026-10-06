@@ -186,9 +186,37 @@ Also `check_roster_capacity()` in `teams.rs` - the format-aware entrant cap.
 
 **Swiss Hotel / Round Robin / Pool Play** (Point Quotient-based):
 1. Wins (descending)
-2. Point Differential
-3. Point Quotient - points_for / points_against
-4. Random tiebreaker
+2. **Head-to-head** - Swiss Hotel and Round Robin only (see below)
+3. Point Differential
+4. Point Quotient - points_for / points_against
+5. Random tiebreaker
+
+**Head-to-head** (`HeadToHead` in `qualifying.rs`) is the regulations' tiebreak for
+**Round Robin and Swiss Hotel ("Rounds") only** — not Swiss System, which ranks on Buchholz,
+and not Pool Play or Panaché, which the regulations do not mention. Those three pass `None`
+and are untouched; `swiss_system_ignores_head_to_head` is the test that holds Swiss out.
+
+The regulations apply it "when only 2 teams are involved", and that clause is load-bearing
+rather than decorative:
+
+- The group is a **win count**, and the rule fires only when **exactly two** teams share it
+  **and** they met during the qualifiers. Then the winner of that game ranks ahead, before
+  differential. Three or more teams on the same number of wins is left entirely to the
+  existing rules, *even when two of them played* — `head_to_head_is_skipped_when_more_than_two_teams_are_tied`.
+- That restriction is what keeps the ranking an ordering at all. Among three teams the rule
+  would have to answer A beat B, B beat C, C beat A — an ordinary weekend — and no ordering
+  satisfies that. Sorting by a comparator that contradicts itself leaves the published table
+  depending on the order rows came out of SQLite. Restricted to a pair, there is no third team
+  and the question never arises. **Do not "generalise" this to a mini-league of the tied group**
+  without re-reading this paragraph: an earlier attempt did exactly that and reordered 125 of
+  the 174 teams in the AIO 2024 fixture, moving 3 teams across the 32-team bracket cut.
+- It reads the rounds already flagged complete **plus the round being completed right now**,
+  which is not flagged until after the ranking has run. Rounds drawn ahead but unplayed are
+  excluded on purpose: their scores are not in the standings, so they must not sway a tiebreak.
+- Because a win count has to hold exactly two teams, the rule is **a small-field rule in
+  practice**. It never fires once in AIO 2024, whose six win counts hold 17 to 39 teams each —
+  which is why `the_2024_amelia_island_open_reproduces_its_published_standings` still passes
+  unchanged, and is the evidence that this reading does not disturb a real event.
 
 ### Elimination Brackets
 - `src/features/brackets/BracketView.tsx` - Main bracket display

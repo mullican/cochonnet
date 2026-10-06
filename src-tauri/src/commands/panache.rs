@@ -1568,7 +1568,7 @@ mod tests {
             params![rid],
         )
         .unwrap();
-        crate::commands::qualifying::calculate_point_quotient_ranks(conn, tid).unwrap();
+        crate::commands::qualifying::calculate_point_quotient_ranks(conn, tid, None).unwrap();
     }
 
     #[test]
