@@ -44,6 +44,7 @@ pub fn run() {
             commands::update_game_score,
             commands::update_game_court,
             commands::complete_round,
+            commands::reopen_round,
             // Bracket commands
             commands::get_brackets,
             commands::get_matches_for_bracket,

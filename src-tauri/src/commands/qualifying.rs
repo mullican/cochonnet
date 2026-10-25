@@ -1049,6 +1049,33 @@ pub fn update_game_score(
     team2_score: i32,
 ) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    set_game_score(&conn, &game_id, team1_score, team2_score)
+}
+
+/// The body of `update_game_score`. A completed round's results are already in
+/// the standings, which are running totals: a score changed under them would
+/// leave the table disagreeing with the games. Reopening the round is the way
+/// to correct one, because that takes its results back out first.
+fn set_game_score(
+    conn: &rusqlite::Connection,
+    game_id: &str,
+    team1_score: i32,
+    team2_score: i32,
+) -> Result<(), String> {
+    let round_complete: bool = conn
+        .query_row(
+            r#"
+            SELECT r.is_complete FROM qualifying_games g
+            JOIN qualifying_rounds r ON r.id = g.round_id
+            WHERE g.id = ?1
+            "#,
+            params![game_id],
+            |row| Ok(row.get::<_, i32>(0)? != 0),
+        )
+        .map_err(|e| e.to_string())?;
+    if round_complete {
+        return Err("This round is complete. Reopen it to correct a score.".to_string());
+    }
 
     conn.execute(
         "UPDATE qualifying_games SET team1_score = ?2, team2_score = ?3 WHERE id = ?1",
@@ -1117,7 +1144,50 @@ pub(crate) fn complete_round_inner(
         return Ok(());
     }
 
-    // Get all games for this round
+    apply_round_results(conn, &tournament_id, round_id)?;
+
+    // Get round number to check for Pool Play elimination
+    let round_number: i32 = conn
+        .query_row(
+            "SELECT round_number FROM qualifying_rounds WHERE id = ?1",
+            params![round_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    rank_standings(conn, &tournament_id, &pairing_method, round_id)?;
+
+    // For Pool Play, mark teams with 2 losses as eliminated after round 3
+    if pairing_method == "poolPlay" && round_number == 3 {
+        conn.execute(
+            r#"
+            UPDATE team_standings
+            SET is_eliminated = 1
+            WHERE tournament_id = ?1 AND losses >= 2
+            "#,
+            params![tournament_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Mark round as complete
+    conn.execute(
+        "UPDATE qualifying_rounds SET is_complete = 1 WHERE id = ?1",
+        params![round_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Adds one round's results to the standings: each game to both sides, and a
+/// bye's 13-7 to the team that drew it. This *adds*, so it must be applied to a
+/// round once - see the guard in `complete_round_inner`.
+fn apply_round_results(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    round_id: &str,
+) -> Result<(), String> {
     let mut stmt = conn
         .prepare(
             r#"
@@ -1174,72 +1244,188 @@ pub(crate) fn complete_round_inner(
             // Panache: the temporary team's result accrues to each member
             // individually. Everything else scores a single team per side.
             if let (Some(side1), Some(side2)) = (&side1_id, &side2_id) {
-                let members1 = load_side_member_ids(&conn, side1)?;
-                let members2 = load_side_member_ids(&conn, side2)?;
-                apply_game_result(&conn, &tournament_id, &members1, s1, s2)?;
-                apply_game_result(&conn, &tournament_id, &members2, s2, s1)?;
+                let members1 = load_side_member_ids(conn, side1)?;
+                let members2 = load_side_member_ids(conn, side2)?;
+                apply_game_result(conn, &tournament_id, &members1, s1, s2)?;
+                apply_game_result(conn, &tournament_id, &members2, s2, s1)?;
             } else if let (Some(t1), Some(t2)) = (&team1_id, &team2_id) {
-                apply_game_result(&conn, &tournament_id, std::slice::from_ref(t1), s1, s2)?;
-                apply_game_result(&conn, &tournament_id, std::slice::from_ref(t2), s2, s1)?;
+                apply_game_result(conn, &tournament_id, std::slice::from_ref(t1), s1, s2)?;
+                apply_game_result(conn, &tournament_id, std::slice::from_ref(t2), s2, s1)?;
             }
         }
     }
 
-    // Get round number to check for Pool Play elimination
-    let round_number: i32 = conn
-        .query_row(
-            "SELECT round_number FROM qualifying_rounds WHERE id = ?1",
-            params![round_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 
+/// Ranks the field the way `pairing_method` ranks it. `current_round_id` names
+/// a round whose results are in the standings but which is not flagged complete
+/// yet - the one `complete_round_inner` is completing - or is empty.
+fn rank_standings(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    pairing_method: &str,
+    current_round_id: &str,
+) -> Result<(), String> {
     // The regulations give the head-to-head tiebreak to Round Robin and Swiss
     // Hotel ("Rounds"). Not to Swiss System, which ranks on Buchholz, and not to
     // Pool Play or Panache, which they do not mention - those pass None and rank
     // exactly as they did before.
-    let head_to_head = match pairing_method.as_str() {
-        "swissHotel" | "roundRobin" => Some(HeadToHead::load(&conn, &tournament_id, round_id)?),
+    let head_to_head = match pairing_method {
+        "swissHotel" | "roundRobin" => Some(HeadToHead::load(conn, tournament_id, current_round_id)?),
         _ => None,
     };
 
     // Calculate rankings based on pairing method
-    match pairing_method.as_str() {
+    match pairing_method {
         "swiss" => {
             // Swiss uses Buchholz tiebreaker
-            calculate_buchholz_and_ranks(&conn, &tournament_id)?;
+            calculate_buchholz_and_ranks(conn, tournament_id)?;
         }
         "swissHotel" | "roundRobin" | "poolPlay" | "panache" => {
             // These use point quotient tiebreaker
-            calculate_point_quotient_ranks(&conn, &tournament_id, head_to_head.as_ref())?;
+            calculate_point_quotient_ranks(conn, tournament_id, head_to_head.as_ref())?;
         }
         _ => {
             // Default to Buchholz
-            calculate_buchholz_and_ranks(&conn, &tournament_id)?;
+            calculate_buchholz_and_ranks(conn, tournament_id)?;
         }
     }
 
-    // For Pool Play, mark teams with 2 losses as eliminated after round 3
-    if pairing_method == "poolPlay" && round_number == 3 {
-        conn.execute(
+    Ok(())
+}
+
+/// Why a completed qualifying round can no longer be reopened, or `None` when
+/// it still can.
+///
+/// A round can be reopened while nothing has been built on its results yet.
+/// Swiss and Pool Play draw each round from the one before, so their completed
+/// rounds are already built on - completing one is the final decision. In the
+/// other formats the next round is drawn without reading the scoreboard, so
+/// only the standings depend on a result, and the standings are rebuilt on
+/// reopening. That holds until something is drawn *from* the standings: the
+/// brackets, or the panache final. Mirrored by `canReopen` in
+/// `QualifyingRounds.tsx`.
+fn reopen_blocker(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    pairing_method: &str,
+) -> Result<Option<&'static str>, String> {
+    if next_round_depends_on_results(pairing_method) {
+        return Ok(Some(
+            "Each round of this format is drawn from the results of the one before, so a completed round cannot be reopened.",
+        ));
+    }
+    let count = |sql: &str| -> Result<i32, String> {
+        conn.query_row(sql, params![tournament_id], |row| row.get(0))
+            .map_err(|e| e.to_string())
+    };
+    if count("SELECT COUNT(*) FROM brackets WHERE tournament_id = ?1")? > 0 {
+        return Ok(Some(
+            "The brackets have been drawn from these standings, so a qualifying round can no longer be reopened.",
+        ));
+    }
+    if count("SELECT COUNT(*) FROM qualifying_rounds WHERE tournament_id = ?1 AND is_final = 1")? > 0 {
+        return Ok(Some(
+            "The final has been drawn from these standings, so a qualifying round can no longer be reopened.",
+        ));
+    }
+    Ok(None)
+}
+
+/// Reopens a completed qualifying round so its scores can be corrected.
+#[tauri::command]
+pub fn reopen_round(db: State<Database>, round_id: String) -> Result<(), String> {
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    reopen_round_inner(&tx, &round_id)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Takes the round's results back out of the standings and lets its scores be
+/// edited again; completing it again puts the corrected results in.
+///
+/// The standings are rebuilt from every round still complete rather than this
+/// round being subtracted from the running totals: a rebuild cannot drift, and
+/// it is the same arithmetic `complete_round_inner` does, applied once per round.
+pub(crate) fn reopen_round_inner(conn: &rusqlite::Connection, round_id: &str) -> Result<(), String> {
+    let (tournament_id, pairing_method, is_final, is_complete): (String, String, bool, bool) = conn
+        .query_row(
             r#"
-            UPDATE team_standings
-            SET is_eliminated = 1
-            WHERE tournament_id = ?1 AND losses >= 2
+            SELECT qr.tournament_id, t.pairing_method, qr.is_final, qr.is_complete
+            FROM qualifying_rounds qr
+            JOIN tournaments t ON qr.tournament_id = t.id
+            WHERE qr.id = ?1
             "#,
-            params![tournament_id],
+            params![round_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get::<_, i32>(2)? != 0,
+                    row.get::<_, i32>(3)? != 0,
+                ))
+            },
         )
         .map_err(|e| e.to_string())?;
+
+    if is_final {
+        return Err("The final cannot be reopened.".to_string());
+    }
+    // Already open: "reopen this round" is satisfied, as completing a complete
+    // round is.
+    if !is_complete {
+        return Ok(());
+    }
+    if let Some(reason) = reopen_blocker(conn, &tournament_id, &pairing_method)? {
+        return Err(reason.to_string());
     }
 
-    // Mark round as complete
     conn.execute(
-        "UPDATE qualifying_rounds SET is_complete = 1 WHERE id = ?1",
+        "UPDATE qualifying_rounds SET is_complete = 0 WHERE id = ?1",
         params![round_id],
     )
     .map_err(|e| e.to_string())?;
+    rebuild_standings(conn, &tournament_id, &pairing_method)
+}
 
-    Ok(())
+/// Recomputes every standing from scratch out of the rounds flagged complete.
+fn rebuild_standings(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    pairing_method: &str,
+) -> Result<(), String> {
+    conn.execute(
+        r#"
+        UPDATE team_standings SET
+            wins = 0, losses = 0, points_for = 0, points_against = 0, differential = 0,
+            buchholz_score = 0, fine_buchholz_score = 0, point_quotient = 0, rank = 0
+        WHERE tournament_id = ?1
+        "#,
+        params![tournament_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let rounds: Vec<String> = conn
+        .prepare(
+            "SELECT id FROM qualifying_rounds WHERE tournament_id = ?1 AND is_complete = 1 AND is_final = 0 \
+             ORDER BY round_number",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map(params![tournament_id], |row| row.get(0))?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(|e| e.to_string())?;
+
+    // With nothing complete the standings are as they were before round 1:
+    // all zero and unranked.
+    if rounds.is_empty() {
+        return Ok(());
+    }
+    for round_id in &rounds {
+        apply_round_results(conn, tournament_id, round_id)?;
+    }
+    rank_standings(conn, tournament_id, pairing_method, "")
 }
 
 #[tauri::command]
@@ -2305,6 +2491,153 @@ mod tests {
             after_second, after_first,
             "completing an already-complete round changed the standings"
         );
+    }
+
+    /// Scores every game of a round `winner`-`loser`, team 1 winning.
+    fn score_round(conn: &Connection, round_id: &str, winner: i32, loser: i32) {
+        conn.execute(
+            "UPDATE qualifying_games SET team1_score = ?2, team2_score = ?3 WHERE round_id = ?1 AND is_bye = 0",
+            params![round_id, winner, loser],
+        )
+        .unwrap();
+    }
+
+    /// (wins, losses, points for, points against) per team, as the stored
+    /// standings have them.
+    fn stored_standings(conn: &Connection) -> HashMap<String, (i32, i32, i32, i32)> {
+        let mut stmt = conn
+            .prepare("SELECT team_id, wins, losses, points_for, points_against FROM team_standings")
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok((row.get(0)?, (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    /// The same, added up straight from the games of every completed round -
+    /// what the standings should say, however they were arrived at.
+    fn standings_from_games(conn: &Connection) -> HashMap<String, (i32, i32, i32, i32)> {
+        let mut totals: HashMap<String, (i32, i32, i32, i32)> = stored_standings(conn)
+            .into_keys()
+            .map(|team| (team, (0, 0, 0, 0)))
+            .collect();
+        let mut stmt = conn
+            .prepare(
+                "SELECT g.team1_id, g.team2_id, g.team1_score, g.team2_score, g.is_bye
+                 FROM qualifying_games g JOIN qualifying_rounds r ON r.id = g.round_id
+                 WHERE r.is_complete = 1",
+            )
+            .unwrap();
+        let games: Vec<(String, Option<String>, Option<i32>, Option<i32>, bool)> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get::<_, i32>(4)? != 0))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for (team1, team2, score1, score2, is_bye) in games {
+            let mut add = |team: &str, own: i32, other: i32| {
+                let t = totals.get_mut(team).unwrap();
+                if own > other { t.0 += 1 } else { t.1 += 1 }
+                t.2 += own;
+                t.3 += other;
+            };
+            if is_bye {
+                add(&team1, 13, 7);
+            } else {
+                let (s1, s2) = (score1.unwrap(), score2.unwrap());
+                add(&team1, s1, s2);
+                add(&team2.unwrap(), s2, s1);
+            }
+        }
+        totals
+    }
+
+    /// A scoring mistake found after the round was completed: reopening takes
+    /// the round's results back out, the score can then be corrected, and
+    /// completing it again leaves standings that agree with the games.
+    #[test]
+    fn a_reopened_round_can_be_corrected() {
+        let conn = seed_with_method(7, 4, 5, "roundRobin");
+        let first = generate_single_round(&conn, TID).unwrap();
+        let second = generate_single_round(&conn, TID).unwrap();
+        score_round(&conn, &first.id, 13, 7);
+        score_round(&conn, &second.id, 13, 5);
+        complete_round_inner(&conn, &first.id).unwrap();
+        complete_round_inner(&conn, &second.id).unwrap();
+        assert_eq!(stored_standings(&conn), standings_from_games(&conn));
+
+        // A completed round's score is not changed underneath the standings.
+        let game: String = conn
+            .query_row(
+                "SELECT id FROM qualifying_games WHERE round_id = ?1 AND is_bye = 0 LIMIT 1",
+                params![first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(set_game_score(&conn, &game, 4, 13).is_err());
+
+        reopen_round_inner(&conn, &first.id).unwrap();
+        // Only the second round is in the standings now.
+        assert_eq!(stored_standings(&conn), standings_from_games(&conn));
+        let wins: i32 = conn
+            .query_row("SELECT SUM(wins) FROM team_standings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(wins, 4, "three games and a bye in round two");
+
+        set_game_score(&conn, &game, 4, 13).unwrap();
+        complete_round_inner(&conn, &first.id).unwrap();
+        assert_eq!(stored_standings(&conn), standings_from_games(&conn));
+        let corrected: (i32, i32) = conn
+            .query_row(
+                "SELECT team1_score, team2_score FROM qualifying_games WHERE id = ?1",
+                params![game],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(corrected, (4, 13));
+
+        // Reopening a round that is already open changes nothing.
+        reopen_round_inner(&conn, &second.id).unwrap();
+        reopen_round_inner(&conn, &second.id).unwrap();
+        assert_eq!(stored_standings(&conn), standings_from_games(&conn));
+    }
+
+    /// Swiss draws each round from the results of the one before, so a
+    /// completed round has already been built on.
+    #[test]
+    fn a_swiss_round_cannot_be_reopened() {
+        let conn = seed_with_method(6, 3, 5, "swiss");
+        let round = generate_single_round(&conn, TID).unwrap();
+        score_round(&conn, &round.id, 13, 7);
+        complete_round_inner(&conn, &round.id).unwrap();
+
+        assert!(reopen_round_inner(&conn, &round.id).is_err());
+        let complete: i32 = conn
+            .query_row("SELECT is_complete FROM qualifying_rounds WHERE id = ?1", params![round.id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(complete, 1);
+    }
+
+    /// Once the brackets are seeded from the standings, the standings are
+    /// settled.
+    #[test]
+    fn a_round_cannot_be_reopened_once_the_brackets_are_drawn() {
+        let conn = seed_with_method(6, 3, 5, "swissHotel");
+        let round = generate_single_round(&conn, TID).unwrap();
+        score_round(&conn, &round.id, 13, 7);
+        complete_round_inner(&conn, &round.id).unwrap();
+        conn.execute(
+            "INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
+             VALUES ('b', ?1, 'A', 0, 4, 0, 'now')",
+            params![TID],
+        )
+        .unwrap();
+
+        let err = reopen_round_inner(&conn, &round.id).unwrap_err();
+        assert!(err.contains("brackets"), "{}", err);
     }
 
     /// The configured round count used to be enforced only by the loop that

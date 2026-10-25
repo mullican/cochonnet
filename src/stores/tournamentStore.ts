@@ -44,6 +44,7 @@ interface TournamentState {
   updateGameScore: (gameId: string, team1Score: number, team2Score: number) => Promise<void>;
   updateGameCourt: (gameId: string, courtNumber: number) => Promise<void>;
   completeRound: (roundId: string) => Promise<void>;
+  reopenRound: (roundId: string) => Promise<void>;
 
   // Panache actions
   generatePanacheRounds: (tournamentId: string) => Promise<QualifyingRound[]>;
@@ -363,6 +364,22 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
       set((state) => ({
         qualifyingRounds: state.qualifyingRounds.map((r) =>
           r.id === roundId ? { ...r, isComplete: true } : r
+        ),
+        loading: false,
+      }));
+    } catch (error) {
+      set({ error: String(error), loading: false });
+      throw error;
+    }
+  },
+
+  reopenRound: async (roundId: string) => {
+    set({ loading: true, error: null });
+    try {
+      await invoke('reopen_round', { roundId });
+      set((state) => ({
+        qualifyingRounds: state.qualifyingRounds.map((r) =>
+          r.id === roundId ? { ...r, isComplete: false } : r
         ),
         loading: false,
       }));

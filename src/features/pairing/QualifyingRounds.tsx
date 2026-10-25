@@ -36,7 +36,10 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     redrawPanacheRounds,
     generatePanacheFinal,
     deleteAllQualifyingRounds,
+    reopenRound,
     fetchStandings,
+    brackets,
+    fetchBrackets,
     teams,
     currentTournament,
   } = useTournamentStore();
@@ -46,6 +49,7 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [redrawFromRound, setRedrawFromRound] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchQualifyingRounds(tournamentId);
@@ -61,6 +65,11 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
 
   const pairingMethod = currentTournament?.pairingMethod || 'swiss';
   const isPanache = pairingMethod === 'panache';
+
+  // Whether the brackets have been drawn decides whether a round can be reopened.
+  useEffect(() => {
+    if (!isPanache) fetchBrackets(tournamentId);
+  }, [tournamentId, isPanache, fetchBrackets]);
 
   const handleGenerateAllRounds = async () => {
     setActionError(null);
@@ -122,6 +131,18 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     }
   };
 
+  const handleReopenRound = async () => {
+    if (!selectedRound) return;
+    setActionError(null);
+    try {
+      await reopenRound(selectedRound.id);
+      await fetchStandings(tournamentId);
+    } catch (error) {
+      setActionError(String(error));
+    }
+    setReopenDialogOpen(false);
+  };
+
   const handleDeleteRounds = async () => {
     setDeleteError(null);
     try {
@@ -174,6 +195,18 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
     qualifyingOnlyRounds.length < maxRounds;
 
   const selectedRound = qualifyingRounds.find((r) => r.id === selectedRoundId) || null;
+
+  // A completed round can be reopened to correct a score while nothing has been
+  // built on its results: never in the formats that draw each round from the
+  // last, and in the others only until the brackets or the panache final are
+  // drawn from the standings. Mirrors `reopen_blocker` in qualifying.rs.
+  const canReopen =
+    !!selectedRound &&
+    selectedRound.isComplete &&
+    !selectedRound.isFinal &&
+    !nextRoundDependsOnResults &&
+    !hasFinal &&
+    brackets.length === 0;
 
   // Determine which generate button to show
   const showGenerateAllButton = !hasRounds && !nextRoundDependsOnResults && !isPanache;
@@ -296,6 +329,20 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
                 </div>
               )}
 
+              {canReopen && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span>{t('pairing.reopenHint')}</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setReopenDialogOpen(true)}
+                    disabled={loading}
+                  >
+                    {t('pairing.reopenRound')}
+                  </Button>
+                </div>
+              )}
+
               {selectedRoundId && (
                 <RoundGames
                   roundId={selectedRoundId}
@@ -332,6 +379,28 @@ export function QualifyingRounds({ tournamentId }: QualifyingRoundsProps) {
             </Button>
             <Button onClick={handleRedrawRounds} disabled={loading}>
               {t('pairing.redraw')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reopen Round Confirmation Dialog */}
+      <Dialog open={reopenDialogOpen} onOpenChange={setReopenDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t('pairing.reopenRoundTitle', { number: selectedRound?.roundNumber ?? 0 })}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-500">
+            {t('pairing.reopenRoundConfirm', { number: selectedRound?.roundNumber ?? 0 })}
+          </p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setReopenDialogOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleReopenRound} disabled={loading}>
+              {t('pairing.reopenRound')}
             </Button>
           </DialogFooter>
         </DialogContent>

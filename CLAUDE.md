@@ -243,6 +243,15 @@ passes most of the time, which is worse than no test.
   command and a replayed backup all arrive through it. The frontend also disables the button
   while the call is in flight, because saving a 67-game round is one round-trip per game and the
   pause was long enough to click through twice
+- `reopen_round()` - Takes a completed round's results back out of the standings so a score can
+  be corrected, then the round is completed again as usual. Allowed only while nothing has been
+  built on the result: never for Swiss or Pool Play (the next round was drawn from it), and in
+  the other formats only until the brackets or the panaché final are drawn from the standings.
+  `reopen_blocker()` is the one statement of that rule, mirrored by `canReopen` in
+  `QualifyingRounds.tsx`. It **rebuilds** the standings from every round still complete
+  (`rebuild_standings`) instead of subtracting, so it cannot drift; it uses the same
+  `apply_round_results` / `rank_standings` that `complete_round` does. For the same reason
+  `update_game_score` refuses a game in a completed round: reopening is how a score is corrected
 - `apply_game_result()` - Adds one result to each competitor's standing (a team, or every member of a panaché temporary team)
 
 **Key Functions in `panache.rs`:**
@@ -436,7 +445,7 @@ panaché database round-trip (sides persist, a shared score lands on each member
 solver and court plans (auxiliary courts, per-round courts, pins, the range parser), round
 generation against a real database (withdrawal, byes, the configured-round cap,
 and both sides of the results-dependency guard — Swiss waits, Swiss Hotel draws ahead),
-the idempotency of `complete_round`, bracket court assignment, the backup round-trip, and the
+the idempotency of `complete_round`, reopening a round (standings checked against the games), bracket court assignment, the backup round-trip, and the
 schema migrations.
 
 Court and bracket tests assert the *invariant*, never the exact numbering: which game gets
