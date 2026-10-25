@@ -188,6 +188,17 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
         );
 
+        -- The operator's court rules, set before play: auxiliary courts, the
+        -- courts each round can use, and featured courts for the closing
+        -- matches. One JSON document per tournament (`CourtPlan` in models);
+        -- a tournament without a row draws courts exactly as it always has.
+        CREATE TABLE IF NOT EXISTS court_plans (
+            tournament_id TEXT PRIMARY KEY,
+            plan TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
+        );
+
         -- Create indexes for better query performance
         CREATE INDEX IF NOT EXISTS idx_teams_tournament ON teams(tournament_id);
         CREATE INDEX IF NOT EXISTS idx_qualifying_rounds_tournament ON qualifying_rounds(tournament_id);
@@ -646,6 +657,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(method, "panache");
+
+        // A database from before court plans gains the table.
+        let has_court_plans: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'court_plans'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_court_plans, "court_plans missing on a migrated database");
     }
 
     #[test]

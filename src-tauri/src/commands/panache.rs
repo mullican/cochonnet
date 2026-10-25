@@ -636,7 +636,14 @@ fn persist_round(
         )
         .map_err(|e| e.to_string())?;
     let court_history = courts::load_qualifying_history(conn, tournament_id)?;
-    let assigned = courts::assign_courts(&sides, &court_history, number_of_courts);
+    let court_plan = courts::load_court_plan(conn, tournament_id)?;
+    let assigned = courts::assign_round_courts(
+        &sides,
+        &court_history,
+        number_of_courts,
+        court_plan.as_ref(),
+        round_number,
+    );
 
     for (game_idx, &(t1, t2)) in round.games.iter().enumerate() {
         let game_id = Uuid::new_v4().to_string();

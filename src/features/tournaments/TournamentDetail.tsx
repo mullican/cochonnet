@@ -21,6 +21,7 @@ import { TeamsList } from '../teams/TeamsList';
 import { QualifyingRounds } from '../pairing/QualifyingRounds';
 import { BracketView } from '../brackets/BracketView';
 import { ExportView } from '../export/ExportView';
+import { CourtPlanView } from '../courts/CourtPlanView';
 
 export function TournamentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -147,6 +148,7 @@ export function TournamentDetail() {
           <TabsTrigger value="teams">
             {isPanache ? t('nav.players') : t('nav.teams')}
           </TabsTrigger>
+          <TabsTrigger value="courts">{t('nav.courts')}</TabsTrigger>
           <TabsTrigger value="qualifying">{t('nav.qualifying')}</TabsTrigger>
           {/* Panache ends with a single final game, so there is no bracket to show. */}
           {!isPanache && <TabsTrigger value="brackets">{t('nav.brackets')}</TabsTrigger>}
@@ -166,6 +168,10 @@ export function TournamentDetail() {
             <BracketView tournamentId={id!} />
           </TabsContent>
         )}
+
+        <TabsContent value="courts" className="mt-4">
+          <CourtPlanView tournamentId={id!} />
+        </TabsContent>
 
         <TabsContent value="export" className="mt-4">
           <ExportView tournamentId={id!} />

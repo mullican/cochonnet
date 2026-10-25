@@ -21,7 +21,7 @@ const Select = forwardRef<HTMLButtonElement, SelectProps>(
         <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
           <SelectPrimitive.Trigger
             ref={ref}
-            className={`flex h-10 w-full min-w-0 touch-manipulation items-center justify-between rounded-md border border-gray-300 bg-white px-3 text-sm pointer-coarse:h-12 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${error ? 'border-red-500' : ''}`}
+            className={`flex h-10 w-full min-w-0 touch-manipulation items-center justify-between rounded-md border bg-white px-3 text-sm pointer-coarse:h-12 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${error ? 'border-red-500' : 'border-gray-300'}`}
           >
             <SelectPrimitive.Value placeholder={placeholder} />
             <SelectPrimitive.Icon className="ml-2">

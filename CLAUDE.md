@@ -131,10 +131,90 @@ cannot it spends the cheap repeats first.
 **Key Functions in `courts.rs`:**
 - `assign_courts()` / `assign_courts_from_slots()` - the pure draw
 - `load_qualifying_history()` - the database adapter
-- `court_slots()` - the courts one set of simultaneous games shares. Note it offers
-  `1..=game_count`, so a venue with more courts than games only ever uses the low-numbered
-  ones. Games stay compact, but rotation quality is bounded by the game count, not the court
-  count - relevant if a field is ever much smaller than its venue.
+- `court_slots()` - the courts one set of simultaneous games shares **when there is no court
+  plan**. It offers `1..=game_count`, so a venue with more courts than games only ever uses
+  the low-numbered ones. Games stay compact, but rotation quality is bounded by the game
+  count, not the court count. A tournament with a plan draws from `plan_slots()` instead,
+  which offers every court the round allows.
+- `assign_courts_from_pool()` - the general draw: a pool that may be larger than the game
+  count (spare courts go unused; `improve()` also moves games onto them) plus `DrawRules`.
+  `assign_courts_from_slots()` is it with empty rules.
+- `assign_round_courts()` - what qualifying and panaché call: the plan's draw if there is one,
+  `assign_courts()` otherwise.
+
+### Court Plan
+
+The operator's court rules, set in advance on the **Courts** tab (`src/features/courts/`) so
+nothing has to be hand-moved while the event is running. Stored as one JSON document per
+tournament in `court_plans` (`CourtPlan` in `models/mod.rs`). It has its own table rather than
+a `tournaments` column, which keeps it out of the positional tournament SQL and the `as any`
+form mapping, and lets it be saved while play is under way.
+
+- **Auxiliary courts** (`auxiliary`, e.g. `"41-52"`) - courts brought in for the event. Used
+  only when the main courts are full. `spreadAuxiliary` keeps a competitor (a player, in
+  panaché) off them for a second game.
+- **Courts by round** (`qualifyingRounds`, `eliminationRounds`) - one court list per round. A
+  **blank row is the row before it**, across one timeline from qualifying round 1 to the last
+  wave, because a string line taken out for the semifinals is still out for the final. A
+  blank first row is the whole venue, and a round past the listed rows keeps the last one.
+  Elimination rows are per **wave** (`play_wave`), so they are **venue-wide**: every bracket
+  playing at that moment gets the same courts, which is what removing a string line does.
+- **Featured courts** (`pins`) - `{bracket, stage, courts}`, where `stage` counts rounds from
+  that bracket's own end (0 final, 1 semifinal), so one pin fits brackets of any size. The
+  stage is worked out from the bracket's matches, not `brackets.size`. A pin overrides the
+  round's courts and *reserves* them: other games in that wave keep off them. A pin gives
+  exactly **one court per match** in its round (1 for a final, 2 for semifinals, 4 for
+  quarterfinals), and one match may be pinned only once; `validate_court_plan` refuses
+  either mistake.
+
+Court lists use print-dialog syntax, `1,3,5,6-11`. `parse_court_list` in `courts.rs` is
+authoritative, and `save_court_plan` refuses anything it rejects, naming the field.
+`courtRanges.ts` is a preview-only twin, and the two must accept exactly the same input.
+Resolution (`ResolvedPlan::new`) is **lenient** on purpose: a court above a court count that
+was lowered later is dropped rather than failing a draw mid-event.
+
+Weights, in order. The per-game costs sit far above anything the history adds up to for one game:
+
+| Cost | Weight | Per |
+|---|---|---|
+| Court not offered this round, or off the game's pin | 10,000,000 | game |
+| Auxiliary court used | 100,000 | game - so main courts fill first and auxiliary courts take only the overflow |
+| Unpinned game on a court a pin is holding | 50,000 | game |
+| Same court twice running | 1,000 | competitor |
+| Another auxiliary game | 300 × auxiliary games already played | competitor |
+| Same court again | 100 | competitor |
+
+The director chose the order of the middle two: a second auxiliary game is better than the
+same court twice running, but worse than an ordinary repeat. `CourtHistory.ever` counts games
+per court, not just which courts were seen, so the scaling can spread auxiliary games evenly.
+
+- **Court demand** (`court_demand` in `courts.rs`, `bracket_demand` in `brackets.rs`) is what
+  the tab is built from: games per qualifying round, matches per wave, the wave count and
+  the bracket names. Brackets already drawn are counted from their matches. Consolantes still
+  to come (advance-all mode draws each one after its bracket's first round) are foreseen
+  from that round, and before the draw the whole layout is foreseen from the settings
+  (`BracketSettings::foresee`, which mirrors `build_brackets`). That is why a featured
+  court can name BB before B has played. Names are foreseen for the roster's ceiling, so
+  a bracket is offered before its teams register; court counts use the teams registered.
+- **A row offering fewer courts than its round has games is refused** (`check_court_capacity`),
+  a blank row being judged by what it carries forward. A round already drawn or a wave
+  already under way asks for nothing, since the plan no longer moves it. So does pool play's
+  third round, whose size depends on round two.
+- **No plan, or an empty one, means the draw is exactly as before.** `plan_is_empty` treats an
+  all-blank plan as none, and `write_court_plan` deletes the row rather than storing it, so
+  saving an untouched form changes nothing.
+- With a plan, a round draws from every court it offers, so a small field spreads across a
+  large venue rather than packing onto the low numbers. Mark the far courts auxiliary if
+  they should stay empty.
+- Saving re-runs `assign_bracket_courts`, so bracket waves that have not started move at
+  once. Qualifying rounds already drawn keep their courts.
+- Off-plan courts are **highlighted, not refused**, like double-bookings, and only on games
+  still to be played: `get_bracket_off_plan_courts` for brackets, and `get_round_court_offer`
+  for the qualifying rounds view.
+- The plan rides in backups (`TournamentBackup.court_plan`). It holds court numbers and
+  bracket names, never ids, so it restores unchanged.
+- A visual court-layout editor was considered and deferred. If it is built, it should be a
+  second editor writing the same `CourtPlan`.
 
 Tests of the draw assert the *invariant*, and only the one that is actually reachable. "Never
 the same court twice running" holds when each game has one court to avoid (fixed pairings, as
@@ -286,6 +366,7 @@ Located in `src-tauri/src/db/schema.rs`:
   from the automatic renumbering)
 - `pairing_history` - Tracks previous matchups
 - `court_history` - Court assignment tracking
+- `court_plans` - The operator's court rules, one JSON `CourtPlan` per tournament
 - `panache_teams` / `panache_team_members` - Panaché temporary teams, per round
 - `panache_sitouts` - Panaché players resting a round
 
@@ -352,7 +433,8 @@ Key namespaces: common, nav, tournaments, teams, pairing, brackets, export, pdf,
 `cd src-tauri && cargo test` — the only automated tests in the repo. They cover the panaché
 scheduler (sit-out rotation, no repeated teammates, champion separation and exposure), the
 panaché database round-trip (sides persist, a shared score lands on each member), the court
-solver, round generation against a real database (withdrawal, byes, the configured-round cap,
+solver and court plans (auxiliary courts, per-round courts, pins, the range parser), round
+generation against a real database (withdrawal, byes, the configured-round cap,
 and both sides of the results-dependency guard — Swiss waits, Swiss Hotel draws ahead),
 the idempotency of `complete_round`, bracket court assignment, the backup round-trip, and the
 schema migrations.

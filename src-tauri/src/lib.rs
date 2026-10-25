@@ -52,6 +52,12 @@ pub fn run() {
             commands::update_match_score,
             commands::update_match_court,
             commands::get_bracket_court_conflicts,
+            commands::get_bracket_off_plan_courts,
+            // Court plan
+            commands::courts::get_court_plan,
+            commands::courts::save_court_plan,
+            commands::courts::get_round_court_offer,
+            commands::courts::get_court_demand,
             // Panache commands
             commands::generate_panache_rounds,
             commands::generate_panache_round,

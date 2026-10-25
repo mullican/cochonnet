@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Tournament, Umpire, Team, QualifyingRound, GameWithTeams, TeamStanding, Bracket, BracketMatch } from '../types';
+import type { Tournament, Umpire, Team, QualifyingRound, GameWithTeams, TeamStanding, Bracket, BracketMatch, CourtDemand, CourtPlan } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 interface TournamentState {
@@ -63,6 +63,12 @@ interface TournamentState {
   fetchMatchesForBracket: (bracketId: string) => Promise<void>;
   updateMatchScore: (matchId: string, team1Score: number, team2Score: number) => Promise<void>;
   updateMatchCourt: (matchId: string, courtNumber: number) => Promise<void>;
+
+  // Court plan. Not held in the store: only the Courts tab reads it, and the
+  // draws read it on the backend.
+  fetchCourtPlan: (tournamentId: string) => Promise<CourtPlan>;
+  fetchCourtDemand: (tournamentId: string) => Promise<CourtDemand>;
+  saveCourtPlan: (tournamentId: string, plan: CourtPlan) => Promise<void>;
 
   // Utility
   clearError: () => void;
@@ -569,6 +575,24 @@ export const useTournamentStore = create<TournamentState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
       throw error;
+    }
+  },
+
+  fetchCourtPlan: async (tournamentId: string) => {
+    return invoke<CourtPlan>('get_court_plan', { tournamentId });
+  },
+
+  fetchCourtDemand: async (tournamentId: string) => {
+    return invoke<CourtDemand>('get_court_demand', { tournamentId });
+  },
+
+  saveCourtPlan: async (tournamentId: string, plan: CourtPlan) => {
+    await invoke('save_court_plan', { tournamentId, plan });
+    // Saving re-draws the bracket waves that have not started, so the matches
+    // on screen may have moved.
+    const bracketIds = new Set(get().bracketMatches.map((m) => m.bracketId));
+    for (const bracketId of bracketIds) {
+      await get().fetchMatchesForBracket(bracketId);
     }
   },
 

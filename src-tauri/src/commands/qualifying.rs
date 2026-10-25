@@ -487,7 +487,14 @@ fn generate_single_round(
         .map(|(t1, t2)| t1.iter().chain(t2.iter()).cloned().collect())
         .collect();
     let court_history = courts::load_qualifying_history(conn, tournament_id)?;
-    let assigned = courts::assign_courts(&sides, &court_history, number_of_courts);
+    let court_plan = courts::load_court_plan(conn, tournament_id)?;
+    let assigned = courts::assign_round_courts(
+        &sides,
+        &court_history,
+        number_of_courts,
+        court_plan.as_ref(),
+        new_round_number,
+    );
 
     // Create the round
     let round_id = Uuid::new_v4().to_string();
@@ -2128,6 +2135,55 @@ mod tests {
             a.into_iter().chain(b)
         })
         .collect()
+    }
+
+    /// A court plan reaches the rounds the real draw produces. Only what holds
+    /// for any pairing is asserted: Swiss Hotel reshuffles, so "nobody plays a
+    /// second auxiliary game" may simply not be reachable.
+    #[test]
+    fn qualifying_rounds_follow_the_court_plan() {
+        // Twenty teams, ten games a round, on fourteen courts - three of
+        // them auxiliary.
+        let conn = seed_with_method(20, 14, 5, "swissHotel");
+        let plan = crate::models::CourtPlan {
+            auxiliary: "12-14".to_string(),
+            spread_auxiliary: true,
+            // Round 3 loses courts 10 and 11, and the rounds after it
+            // carry that forward.
+            qualifying_rounds: vec![String::new(), String::new(), "1-9,12-14".to_string()],
+            ..Default::default()
+        };
+        courts::write_court_plan(&conn, TID, &plan).unwrap();
+
+        for round in 1..=5 {
+            let drawn = generate_single_round(&conn, TID).unwrap();
+            let mut stmt = conn
+                .prepare("SELECT court_number FROM qualifying_games WHERE round_id = ?1")
+                .unwrap();
+            let courts: Vec<i32> = stmt
+                .query_map(params![drawn.id], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            let auxiliary = courts.iter().filter(|c| **c >= 12).count();
+            if round < 3 {
+                assert_eq!(auxiliary, 0, "round {} used an auxiliary court: {:?}", round, courts);
+            } else {
+                assert!(
+                    courts.iter().all(|c| ![10, 11].contains(c)),
+                    "round {} used a court the plan took away: {:?}",
+                    round,
+                    courts
+                );
+                // Nine main courts for ten games: exactly one overflow.
+                assert_eq!(auxiliary, 1, "round {}: {:?}", round, courts);
+            }
+            let mut unique = courts.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(unique.len(), courts.len(), "round {} double-booked: {:?}", round, courts);
+        }
     }
 
     /// The point of withdrawal: a team that has pulled out cannot be deleted -

@@ -225,3 +225,38 @@ pub struct MatchWithTeams {
     pub winner: Option<Team>,
 }
 
+
+/// The operator's court rules, written before play and read by every draw.
+///
+/// Court lists are kept as the text the operator typed - "1,3,5,6-11" - and
+/// parsed by `courts::parse_court_list` when a round is drawn, so the plan reads
+/// back exactly as it was entered. Every field defaults, which is what lets a
+/// plan saved by an older build, or a backup without one, load at all.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CourtPlan {
+    /// Courts added for the event: used only when the main courts run out.
+    pub auxiliary: String,
+    /// Keep any one competitor from playing more than one game on them.
+    pub spread_auxiliary: bool,
+    /// Courts available in each qualifying round, by position. A blank entry
+    /// means "the same as the round before".
+    pub qualifying_rounds: Vec<String>,
+    /// The same for each elimination wave, carrying on from the qualifying rows.
+    pub elimination_rounds: Vec<String>,
+    /// Bracket matches sent to particular courts.
+    pub pins: Vec<CourtPin>,
+}
+
+/// One featured court: "bracket A's final goes on court 1".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CourtPin {
+    /// The bracket's name as it is drawn: "A", "B", "AA".
+    pub bracket: String,
+    /// Rounds from the end of that bracket: 0 the final, 1 the semifinals, 2 the
+    /// quarterfinals. Counted from the end so one pin works for a bracket of
+    /// any size.
+    pub stage: i32,
+    pub courts: String,
+}

@@ -10,9 +10,11 @@
 //! the same file can be imported more than once (to keep a copy before an
 //! experiment, say).
 
+use super::courts;
 use crate::db::Database;
 use crate::models::{
-    Bracket, BracketMatch, QualifyingGame, QualifyingRound, Team, TeamStanding, Tournament, Umpire,
+    Bracket, BracketMatch, CourtPlan, QualifyingGame, QualifyingRound, Team, TeamStanding,
+    Tournament, Umpire,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection};
@@ -107,6 +109,10 @@ pub struct TournamentBackup {
     pub pairing_history: Vec<PairingHistoryRow>,
     #[serde(default)]
     pub court_history: Vec<CourtHistoryRow>,
+    /// The operator's court rules. Absent from backups written before plans,
+    /// and from any tournament that never had one.
+    #[serde(default)]
+    pub court_plan: Option<CourtPlan>,
 }
 
 fn default_format_version() -> i32 {
@@ -352,6 +358,7 @@ pub fn collect_backup(conn: &Connection, tournament_id: &str) -> Result<Tourname
         panache_sitouts,
         pairing_history,
         court_history,
+        court_plan: courts::read_court_plan(conn, tournament_id)?,
     })
 }
 
@@ -621,6 +628,12 @@ pub fn restore_backup(conn: &Connection, backup: &TournamentBackup) -> Result<St
         .map_err(|e| e.to_string())?;
     }
 
+    // A plan holds court numbers and bracket names, never ids, so it restores
+    // as it was written.
+    if let Some(plan) = &backup.court_plan {
+        courts::write_court_plan(&tx, &tournament_id, plan)?;
+    }
+
     tx.commit()
         .map_err(|e| format!("Restore failed, nothing was changed: {}", e))?;
 
@@ -770,6 +783,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(original, 2);
+    }
+
+    #[test]
+    fn a_court_plan_survives_the_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        let id = seed(&conn);
+        let plan = CourtPlan {
+            auxiliary: "4".to_string(),
+            spread_auxiliary: true,
+            elimination_rounds: vec![String::new(), "1,3".to_string()],
+            pins: vec![crate::models::CourtPin {
+                bracket: "A".to_string(),
+                stage: 0,
+                courts: "1".to_string(),
+            }],
+            ..CourtPlan::default()
+        };
+        courts::write_court_plan(&conn, &id, &plan).unwrap();
+
+        // Through the file format, not just the struct, so the field names
+        // are what is being tested.
+        let json = serde_json::to_string(&collect_backup(&conn, &id).unwrap()).unwrap();
+        let new_id = restore_backup(&conn, &serde_json::from_str(&json).unwrap()).unwrap();
+
+        let restored = courts::read_court_plan(&conn, &new_id).unwrap().expect("plan was dropped");
+        assert_eq!(restored.auxiliary, "4");
+        assert!(restored.spread_auxiliary);
+        assert_eq!(restored.elimination_rounds, plan.elimination_rounds);
+        assert_eq!(restored.pins.len(), 1);
+        assert_eq!(restored.pins[0].courts, "1");
     }
 
     #[test]

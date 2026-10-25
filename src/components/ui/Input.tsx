@@ -7,6 +7,8 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className = '', label, error, id, ...props }, ref) => {
+    // `aria-invalid` marks a field whose message is shown somewhere else.
+    const invalid = !!error || props['aria-invalid'] === true;
     return (
       <div className="flex min-w-0 flex-col gap-1.5">
         {label && (
@@ -16,7 +18,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         )}
         <input
           id={id}
-          className={`h-10 w-full min-w-0 touch-manipulation rounded-md border border-gray-300 pointer-coarse:h-12 bg-white px-3 text-sm placeholder:text-gray-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${error ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20' : ''} ${className}`}
+          className={`h-10 w-full min-w-0 touch-manipulation rounded-md border pointer-coarse:h-12 bg-white px-3 text-sm placeholder:text-gray-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${invalid ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20' : 'border-gray-300'} ${className}`}
           ref={ref}
           {...props}
         />

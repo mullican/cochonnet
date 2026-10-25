@@ -50,6 +50,9 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   // spans every bracket, and this view only holds one, so the backend works it
   // out - it is where the wave is defined.
   const [clashing, setClashing] = useState<Set<string>>(new Set());
+  // Matches still to play on a court the court plan does not offer them.
+  // Highlighted like a clash, and for the same reason not refused.
+  const [offPlan, setOffPlan] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const demoArmed = useDemoStore((state) => state.armed);
   const reportDemo = useDemoStore((state) => state.report);
@@ -59,12 +62,22 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
   const refreshConflicts = useCallback(async () => {
     if (!tournamentId) return;
     try {
-      const ids = await invoke<string[]>('get_bracket_court_conflicts', { tournamentId });
+      const [ids, offPlanIds] = await Promise.all([
+        invoke<string[]>('get_bracket_court_conflicts', { tournamentId }),
+        invoke<string[]>('get_bracket_off_plan_courts', { tournamentId }),
+      ]);
       setClashing(new Set(ids));
+      setOffPlan(new Set(offPlanIds));
     } catch (error) {
       console.error('Failed to check court conflicts:', error);
     }
   }, [tournamentId]);
+
+  const courtWarningFor = (matchId: string): string | undefined => {
+    if (clashing.has(matchId)) return t('brackets.courtClash');
+    if (offPlan.has(matchId)) return t('brackets.courtOffPlan');
+    return undefined;
+  };
 
   useEffect(() => {
     fetchMatchesForBracket(bracketId);
@@ -252,7 +265,8 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                 >
                   {matches.map((match) => {
                     const isOpenable = canOpenMatch(match);
-                    const hasClash = clashing.has(match.id);
+                    const courtWarning = courtWarningFor(match.id);
+                    const hasClash = courtWarning !== undefined;
                     return (
                       <Card
                         key={match.id}
@@ -270,7 +284,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                             className={`text-xs text-center ${
                               hasClash ? 'font-medium text-red-600' : 'text-gray-400'
                             }`}
-                            title={hasClash ? t('brackets.courtClash') : undefined}
+                            title={courtWarning}
                           >
                             {match.courtNumber ? `${t('pairing.court')} ${match.courtNumber}` : ''}
                           </div>
@@ -437,11 +451,11 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                     value={court}
                     onChange={(e) => setCourt(e.target.value)}
                     className={`w-14 px-1 text-center ${
-                      clashing.has(selectedMatch.id) ? 'border-red-500 focus:border-red-500' : ''
+                      courtWarningFor(selectedMatch.id) ? 'border-red-500 focus:border-red-500' : ''
                     }`}
                   />
-                  {clashing.has(selectedMatch.id) && (
-                    <span className="pt-6 text-xs text-red-600">{t('brackets.courtClash')}</span>
+                  {courtWarningFor(selectedMatch.id) && (
+                    <span className="pt-6 text-xs text-red-600">{courtWarningFor(selectedMatch.id)}</span>
                   )}
                 </div>
               ) : (

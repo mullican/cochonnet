@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { useTournamentStore } from '../../stores/tournamentStore';
 import {
@@ -32,6 +33,7 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     qualifyingSitouts,
     fetchSitoutsForRound,
     currentTournament,
+    qualifyingRounds,
   } = useTournamentStore();
 
   const [scores, setScores] = useState<Record<string, { team1: string; team2: string }>>({});
@@ -43,6 +45,16 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
   const [search, setSearch] = useState('');
   const demoArmed = useDemoStore((state) => state.armed);
   const reportDemo = useDemoStore((state) => state.report);
+  // The courts the court plan offers this round, or null with no plan.
+  const [courtOffer, setCourtOffer] = useState<Set<number> | null>(null);
+  const roundNumber = qualifyingRounds.find((r) => r.id === roundId)?.roundNumber;
+
+  useEffect(() => {
+    if (roundNumber === undefined) return;
+    invoke<number[] | null>('get_round_court_offer', { tournamentId, roundNumber })
+      .then((courts) => setCourtOffer(courts ? new Set(courts) : null))
+      .catch((error) => console.error('Failed to read the court plan:', error));
+  }, [tournamentId, roundNumber]);
 
   useEffect(() => {
     // Reset scores when switching rounds
@@ -180,6 +192,11 @@ export function RoundGames({ roundId, tournamentId, isComplete }: RoundGamesProp
     // perfectly valid assignments pointing at courts the venue no longer has.
     if (courtCount > 0 && (game.courtNumber < 1 || game.courtNumber > courtCount)) {
       return t('pairing.courtOutOfRange', { count: courtCount });
+    }
+    // Only while the game is still to play: once it has been, its court is a
+    // record of where it happened.
+    if (courtOffer && !courtLocked(game) && !courtOffer.has(game.courtNumber)) {
+      return t('pairing.courtOffPlan');
     }
     return undefined;
   };

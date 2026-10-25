@@ -5,6 +5,7 @@ use crate::commands::teams::get_team_by_id;
 use chrono::Utc;
 use rand::seq::SliceRandom;
 use rusqlite::params;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 use uuid::Uuid;
 
@@ -323,7 +324,6 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
     }
 
     // Create brackets based on bracket size
-    let bracket_names = ["A", "B", "C", "D", "E", "F", "G", "H"];
     let mut bracket_idx = 0;
     let mut start_idx = 0;
 
@@ -339,11 +339,7 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
             break;
         }
 
-        let bracket_name = if bracket_idx < bracket_names.len() {
-            bracket_names[bracket_idx].to_string()
-        } else {
-            format!("Bracket {}", bracket_idx + 1)
-        };
+        let bracket_name = bracket_name(bracket_idx);
 
         // Create main bracket
         let bracket_id = Uuid::new_v4().to_string();
@@ -370,6 +366,14 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
     Ok(())
 }
 
+/// The name of the `index`th main bracket (from 0): A to H, then numbered.
+fn bracket_name(index: usize) -> String {
+    const NAMES: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    NAMES
+        .get(index)
+        .map_or_else(|| format!("Bracket {}", index + 1), |name| name.to_string())
+}
+
 /// The wave of play a bracket match belongs to.
 ///
 /// A consolante is drawn from its main bracket's first-round losers, so it
@@ -387,6 +391,9 @@ fn play_wave(round_number: i32, is_consolante: bool) -> i32 {
 /// One bracket match, as court assignment sees it.
 struct CourtCandidate {
     id: String,
+    bracket_id: String,
+    bracket_name: String,
+    round_number: i32,
     wave: i32,
     is_bye: bool,
     /// Already played, or set by hand: its court is not ours to move.
@@ -397,6 +404,81 @@ struct CourtCandidate {
     /// The teams on court, where they are known. A match still waiting on its
     /// feeders has nobody yet, so it has no history to avoid.
     teams: Vec<String>,
+    /// The courts the plan's featured-court rows send this match to.
+    pin: Option<HashSet<i32>>,
+}
+
+/// Rounds from the end of its bracket for every candidate: 0 the final, 1 the
+/// semifinals. Taken from the matches themselves rather than the bracket's
+/// stored size, so it holds for any bracket however it was drawn.
+fn rounds_from_end(matches: &[CourtCandidate]) -> HashMap<String, i32> {
+    let mut last_round: HashMap<String, i32> = HashMap::new();
+    for m in matches {
+        let last = last_round.entry(m.bracket_id.clone()).or_insert(m.round_number);
+        *last = (*last).max(m.round_number);
+    }
+    last_round
+}
+
+/// Every bracket match with its wave, bracket and pin, for the court draw and
+/// the conflict check alike.
+fn load_court_candidates(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    plan: Option<&courts::ResolvedPlan>,
+) -> Result<Vec<CourtCandidate>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT m.id, m.round_number, b.is_consolante, m.is_bye, m.court_is_manual,
+                   m.court_number, m.team1_id, m.team2_id, m.team1_score, m.team2_score,
+                   b.id, b.name
+            FROM bracket_matches m
+            JOIN brackets b ON b.id = m.bracket_id
+            WHERE b.tournament_id = ?1
+            ORDER BY b.name ASC, m.round_number ASC, m.match_number ASC
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut matches: Vec<CourtCandidate> = stmt
+        .query_map(params![tournament_id], |row| {
+            let is_manual: bool = row.get::<_, i32>(4)? != 0;
+            let court: Option<i32> = row.get(5)?;
+            let team1: Option<String> = row.get(6)?;
+            let team2: Option<String> = row.get(7)?;
+            let score1: Option<i32> = row.get(8)?;
+            let score2: Option<i32> = row.get(9)?;
+            let played = score1.is_some() || score2.is_some();
+            let round_number: i32 = row.get(1)?;
+
+            Ok(CourtCandidate {
+                id: row.get(0)?,
+                bracket_id: row.get(10)?,
+                bracket_name: row.get(11)?,
+                round_number,
+                wave: play_wave(round_number, row.get::<_, i32>(2)? != 0),
+                is_bye: row.get::<_, i32>(3)? != 0,
+                is_fixed: court.is_some() && (is_manual || played),
+                played,
+                court,
+                teams: team1.into_iter().chain(team2).collect(),
+                pin: None,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(plan) = plan {
+        let last_round = rounds_from_end(&matches);
+        for m in &mut matches {
+            let stage = last_round[&m.bracket_id] - m.round_number;
+            m.pin = plan.pin_for(&m.bracket_name, stage).cloned();
+        }
+    }
+
+    Ok(matches)
 }
 
 /// Numbers the courts across every bracket in the tournament.
@@ -413,7 +495,10 @@ struct CourtCandidate {
 /// simply takes it out of what the rest of the wave can use.
 ///
 /// BYEs are left without a court: nobody plays them, so they take up no space.
-fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Result<(), String> {
+pub(crate) fn assign_bracket_courts(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+) -> Result<(), String> {
     let number_of_courts: i32 = conn
         .query_row(
             "SELECT number_of_courts FROM tournaments WHERE id = ?1",
@@ -426,42 +511,8 @@ fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Re
         return Ok(());
     }
 
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT m.id, m.round_number, b.is_consolante, m.is_bye, m.court_is_manual,
-                   m.court_number, m.team1_id, m.team2_id, m.team1_score, m.team2_score
-            FROM bracket_matches m
-            JOIN brackets b ON b.id = m.bracket_id
-            WHERE b.tournament_id = ?1
-            ORDER BY b.name ASC, m.round_number ASC, m.match_number ASC
-            "#,
-        )
-        .map_err(|e| e.to_string())?;
-
-    let matches: Vec<CourtCandidate> = stmt
-        .query_map(params![tournament_id], |row| {
-            let is_manual: bool = row.get::<_, i32>(4)? != 0;
-            let court: Option<i32> = row.get(5)?;
-            let team1: Option<String> = row.get(6)?;
-            let team2: Option<String> = row.get(7)?;
-            let score1: Option<i32> = row.get(8)?;
-            let score2: Option<i32> = row.get(9)?;
-            let played = score1.is_some() || score2.is_some();
-
-            Ok(CourtCandidate {
-                id: row.get(0)?,
-                wave: play_wave(row.get(1)?, row.get::<_, i32>(2)? != 0),
-                is_bye: row.get::<_, i32>(3)? != 0,
-                is_fixed: court.is_some() && (is_manual || played),
-                played,
-                court,
-                teams: team1.into_iter().chain(team2).collect(),
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    let plan = courts::load_court_plan(conn, tournament_id)?;
+    let matches = load_court_candidates(conn, tournament_id, plan.as_ref())?;
 
     // What the qualifying rounds already put these teams on. Earlier waves add
     // to it as they are settled, so a bracket run reads as one continuation of
@@ -500,24 +551,60 @@ fn assign_bracket_courts(conn: &rusqlite::Connection, tournament_id: &str) -> Re
             continue;
         }
 
-        // A wave with more games than the venue has courts has to double up:
-        // the extra games wait for a court to free up.
-        let mut pool = courts::court_slots(playing.len(), number_of_courts);
-        for fixed in playing.iter().filter(|m| m.is_fixed) {
-            if let Some(court) = fixed.court {
-                if let Some(idx) = pool.iter().position(|slot| *slot == court) {
-                    pool.remove(idx);
-                } else if !pool.is_empty() {
-                    // The operator put a game on a court outside the pool. It
-                    // stays there; the wave just has one fewer slot to share.
-                    pool.pop();
-                }
-            }
-        }
-
         let movable: Vec<&CourtCandidate> = playing.iter().copied().filter(|m| !m.is_fixed).collect();
         let sides: Vec<Vec<String>> = movable.iter().map(|m| m.teams.clone()).collect();
-        let assigned = courts::assign_courts_from_slots(&sides, &history, &pool);
+        let fixed_courts: Vec<i32> = playing
+            .iter()
+            .filter(|m| m.is_fixed)
+            .filter_map(|m| m.court)
+            .collect();
+
+        let assigned = match &plan {
+            None => {
+                // A wave with more games than the venue has courts has to
+                // double up: the extra games wait for a court to free up.
+                let mut pool = courts::court_slots(playing.len(), number_of_courts);
+                for court in &fixed_courts {
+                    if let Some(idx) = pool.iter().position(|slot| slot == court) {
+                        pool.remove(idx);
+                    } else if !pool.is_empty() {
+                        // The operator put a game on a court outside the pool.
+                        // It stays there; the wave just has one fewer slot.
+                        pool.pop();
+                    }
+                }
+                courts::assign_courts_from_slots(&sides, &history, &pool)
+            }
+            Some(plan) => {
+                // What the wave offers, plus whatever its pins name - a pin
+                // is the more specific instruction - less the courts already
+                // settled. Only if that leaves nothing do games double up on
+                // a settled court.
+                let offered = plan.wave_courts(*wave);
+                let reserved: HashSet<i32> = playing
+                    .iter()
+                    .filter_map(|m| m.pin.as_ref())
+                    .flatten()
+                    .copied()
+                    .collect();
+                let mut open: Vec<i32> = offered
+                    .iter()
+                    .chain(&reserved)
+                    .copied()
+                    .filter(|c| !fixed_courts.contains(c))
+                    .collect();
+                open.sort_unstable();
+                open.dedup();
+                if open.is_empty() {
+                    open = offered.to_vec();
+                }
+
+                let pinned = movable.iter().map(|m| m.pin.clone()).collect();
+                let rules = plan.rules(offered, pinned, reserved);
+                let pool = courts::plan_slots(movable.len(), &open, &plan.auxiliary);
+                courts::assign_courts_from_pool(&sides, &history, &pool, &rules)
+            }
+        };
 
         for (candidate, court) in movable.iter().zip(&assigned) {
             conn.execute(
@@ -890,8 +977,7 @@ pub fn get_bracket_court_conflicts(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    let mut by_slot: std::collections::HashMap<(i32, i32), Vec<String>> =
-        std::collections::HashMap::new();
+    let mut by_slot: HashMap<(i32, i32), Vec<String>> = HashMap::new();
     for (id, wave, court) in rows {
         by_slot.entry((wave, court)).or_default().push(id);
     }
@@ -903,6 +989,41 @@ pub fn get_bracket_court_conflicts(
         .collect();
     clashing.sort();
     Ok(clashing)
+}
+
+/// The bracket matches still to be played on a court the court plan does not
+/// offer them: off the round's courts, or off the courts their pin names.
+///
+/// Highlighted, not refused, the same as a double-booking. A hand-set court
+/// is the operator's call, and a draw that could not meet the plan still had
+/// to put the game somewhere; either way the operator should see it before
+/// printing. A played match is left out - its court is a record by then.
+#[tauri::command]
+pub fn get_bracket_off_plan_courts(
+    db: State<Database>,
+    tournament_id: String,
+) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    off_plan_matches(&conn, &tournament_id)
+}
+
+fn off_plan_matches(conn: &rusqlite::Connection, tournament_id: &str) -> Result<Vec<String>, String> {
+    let Some(plan) = courts::load_court_plan(conn, tournament_id)? else {
+        return Ok(Vec::new());
+    };
+    let mut off: Vec<String> = load_court_candidates(conn, tournament_id, Some(&plan))?
+        .into_iter()
+        .filter(|m| !m.is_bye && !m.played)
+        .filter(|m| {
+            m.court.is_some_and(|court| match &m.pin {
+                Some(pin) => !pin.contains(&court),
+                None => !plan.wave_courts(m.wave).contains(&court),
+            })
+        })
+        .map(|m| m.id)
+        .collect();
+    off.sort();
+    Ok(off)
 }
 
 fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) -> Result<(), String> {
@@ -1157,6 +1278,234 @@ fn create_consolante_matches(
     }
 
     Ok(())
+}
+
+
+// ---------------------------------------------------------------------------
+// What the brackets will ask of the courts
+// ---------------------------------------------------------------------------
+
+/// One bracket as the court plan sees it, drawn or only foreseen: its name and
+/// how many matches need a court in each round.
+struct BracketShape {
+    name: String,
+    is_consolante: bool,
+    /// Matches needing a court, by round (index 0 is round 1). A bye needs none.
+    matches: Vec<i32>,
+}
+
+impl BracketShape {
+    /// A bracket for `teams` teams as `create_bracket_matches` draws it: rounded
+    /// up to a power of two, with the top seeds on byes.
+    fn for_teams(name: String, is_consolante: bool, teams: i32) -> Self {
+        let size = (teams as f64).log2().ceil().exp2() as i32;
+        let rounds = size.trailing_zeros();
+        let matches = (1..=rounds)
+            .map(|round| if round == 1 { teams - size / 2 } else { size >> round })
+            .collect();
+        Self { name, is_consolante, matches }
+    }
+
+    /// The consolante `check_and_create_consolante` will draw from this
+    /// bracket's first-round losers, if there are enough of them.
+    fn consolante(&self) -> Option<Self> {
+        let losers = *self.matches.first()?;
+        (losers >= 2).then(|| Self::for_teams(format!("{0}{0}", self.name), true, losers))
+    }
+}
+
+/// The settings `build_brackets` draws from.
+struct BracketSettings {
+    advance_all: bool,
+    advance_count: Option<i32>,
+    bracket_size: i32,
+    has_consolante: bool,
+}
+
+impl BracketSettings {
+    fn load(conn: &rusqlite::Connection, tournament_id: &str) -> Result<Self, String> {
+        conn.query_row(
+            "SELECT advance_all, advance_count, bracket_size, has_consolante FROM tournaments WHERE id = ?1",
+            params![tournament_id],
+            |row| {
+                Ok(Self {
+                    advance_all: row.get::<_, i32>(0)? != 0,
+                    advance_count: row.get(1)?,
+                    bracket_size: row.get(2)?,
+                    has_consolante: row.get::<_, i32>(3)? != 0,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// Whether each main bracket gets a consolante of its own later, once its
+    /// first round is played, rather than one drawn alongside it.
+    fn consolantes_follow(&self) -> bool {
+        self.advance_all && self.has_consolante
+    }
+
+    /// The brackets `build_brackets` would draw for `teams` ranked teams, and
+    /// the consolantes that would follow from them.
+    fn foresee(&self, teams: i32) -> Vec<BracketShape> {
+        let mut shapes = Vec::new();
+        if !self.advance_all && self.has_consolante {
+            let concours = teams.min(self.bracket_size);
+            let consolante = (teams - self.bracket_size).clamp(0, self.bracket_size);
+            if concours >= 2 {
+                shapes.push(BracketShape::for_teams("A".to_string(), false, concours));
+                if consolante >= 2 {
+                    shapes.push(BracketShape::for_teams("AA".to_string(), true, consolante));
+                }
+            }
+            return shapes;
+        }
+
+        let advancing = if self.advance_all {
+            teams
+        } else {
+            self.advance_count.unwrap_or(self.bracket_size).min(teams)
+        };
+        let (mut start, mut index) = (0, 0);
+        // A last chunk of one team is not a bracket, as in `build_brackets`.
+        while advancing - start >= 2 {
+            let chunk = (advancing - start).min(self.bracket_size);
+            let shape = BracketShape::for_teams(bracket_name(index), false, chunk);
+            index += 1;
+            let consolante = shape.consolante().filter(|_| self.consolantes_follow());
+            shapes.push(shape);
+            shapes.extend(consolante);
+            start += chunk;
+        }
+        shapes
+    }
+}
+
+/// The brackets drawn so far, and the waves that already have a score in them.
+fn drawn_shapes(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+) -> Result<(Vec<BracketShape>, HashSet<i32>), String> {
+    let matches = load_court_candidates(conn, tournament_id, None)?;
+    let started: HashSet<i32> = matches.iter().filter(|m| m.played).map(|m| m.wave).collect();
+
+    let mut shapes: Vec<BracketShape> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for m in &matches {
+        let at = *index.entry(m.bracket_id.clone()).or_insert_with(|| {
+            shapes.push(BracketShape {
+                name: m.bracket_name.clone(),
+                is_consolante: m.wave != m.round_number,
+                matches: Vec::new(),
+            });
+            shapes.len() - 1
+        });
+        let rounds = &mut shapes[at].matches;
+        let round = (m.round_number.max(1) - 1) as usize;
+        if rounds.len() <= round {
+            rounds.resize(round + 1, 0);
+        }
+        if !m.is_bye {
+            rounds[round] += 1;
+        }
+    }
+    Ok((shapes, started))
+}
+
+/// One featured-court slot a wave holds: a bracket's match `stage` rounds from
+/// its end.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveStage {
+    pub bracket: String,
+    pub stage: i32,
+}
+
+/// What one elimination wave asks of the courts.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveDemand {
+    /// Matches still to be given a court. A wave already under way asks for
+    /// nothing: its courts are on the ground and the plan no longer moves them.
+    pub matches: i32,
+    pub stages: Vec<WaveStage>,
+}
+
+/// What the brackets will ask of the courts, for the court plan.
+pub(crate) struct BracketDemand {
+    /// Every bracket a featured court can name: the brackets drawn and the
+    /// consolantes still to come or, before the draw, every one the settings
+    /// could produce for a full roster.
+    pub names: Vec<String>,
+    /// Per wave, from wave 1, for the field as it stands.
+    pub waves: Vec<WaveDemand>,
+    /// How many waves the plan should offer a row for.
+    pub wave_count: i32,
+}
+
+/// `roster_limit` is the most teams the tournament can take. Before the draw it
+/// stands in for a field that may still be growing, so a bracket the plan
+/// features is not missing from the list merely because its teams have not
+/// registered yet. The court counts, by contrast, are for the teams registered.
+pub(crate) fn bracket_demand(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    teams: i32,
+    roster_limit: i32,
+) -> Result<BracketDemand, String> {
+    let settings = BracketSettings::load(conn, tournament_id)?;
+    let (mut shapes, started) = drawn_shapes(conn, tournament_id)?;
+
+    let listed = if shapes.is_empty() {
+        shapes = settings.foresee(teams);
+        settings.foresee(teams.max(roster_limit))
+    } else {
+        // A consolante not drawn yet: its bracket's first round is still on.
+        if settings.consolantes_follow() {
+            let drawn: HashSet<String> = shapes.iter().map(|s| s.name.clone()).collect();
+            let coming: Vec<BracketShape> = shapes
+                .iter()
+                .filter(|s| !s.is_consolante)
+                .filter_map(BracketShape::consolante)
+                .filter(|c| !drawn.contains(&c.name))
+                .collect();
+            shapes.extend(coming);
+        }
+        Vec::new()
+    };
+
+    let last_wave = |shapes: &[BracketShape]| {
+        shapes
+            .iter()
+            .map(|s| play_wave(s.matches.len() as i32, s.is_consolante))
+            .max()
+            .unwrap_or(0)
+    };
+    let wave_count = last_wave(&shapes).max(last_wave(&listed));
+
+    let mut waves: Vec<WaveDemand> = (0..last_wave(&shapes))
+        .map(|_| WaveDemand { matches: 0, stages: Vec::new() })
+        .collect();
+    for shape in &shapes {
+        let rounds = shape.matches.len() as i32;
+        for (i, &matches) in shape.matches.iter().enumerate() {
+            let round = i as i32 + 1;
+            let wave = play_wave(round, shape.is_consolante);
+            let demand = &mut waves[(wave - 1) as usize];
+            if !started.contains(&wave) {
+                demand.matches += matches;
+            }
+            demand.stages.push(WaveStage { bracket: shape.name.clone(), stage: rounds - round });
+        }
+    }
+
+    // `get_brackets` orders by name, which puts each consolante after its own
+    // bracket: A, AA, B, BB. The list is ordered the same way.
+    let mut names: Vec<String> = shapes.iter().chain(&listed).map(|s| s.name.clone()).collect();
+    names.sort();
+    names.dedup();
+
+    Ok(BracketDemand { names, waves, wave_count })
 }
 
 #[cfg(test)]
@@ -1549,5 +1898,248 @@ mod tests {
         let err = build_brackets(&conn, TOURNAMENT_ID).unwrap_err();
         assert!(err.contains("at least 2"), "unhelpful error: {}", err);
         assert!(bracket_rows(&conn).is_empty(), "left brackets behind after failing");
+    }
+
+    fn save_plan(conn: &Connection, plan: &crate::models::CourtPlan) {
+        courts::write_court_plan(conn, TOURNAMENT_ID, plan).unwrap();
+    }
+
+    /// The courts every real match of one bracket round was given.
+    fn round_courts(conn: &Connection, bracket: &str, round: i32) -> Vec<i32> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.court_number FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id
+                 WHERE b.name = ?1 AND m.round_number = ?2 AND m.is_bye = 0",
+            )
+            .unwrap();
+        stmt.query_map(params![bracket, round], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    /// Once the string lines come out, every game played at that moment - in
+    /// every bracket - keeps to the courts that are left.
+    #[test]
+    fn closing_waves_keep_to_the_courts_the_plan_leaves() {
+        let conn = setup(16);
+        add_bracket(&conn, "A", false, 16, 0);
+        add_bracket(&conn, "B", false, 16, 0);
+        save_plan(
+            &conn,
+            &crate::models::CourtPlan {
+                elimination_rounds: vec![
+                    String::new(),
+                    String::new(),
+                    "1,3,5,7".to_string(),
+                    "1,3".to_string(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        for _ in 0..10 {
+            assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+            for bracket in ["A", "B"] {
+                for court in round_courts(&conn, bracket, 3) {
+                    assert!([1, 3, 5, 7].contains(&court), "{} semifinal on court {}", bracket, court);
+                }
+                for court in round_courts(&conn, bracket, 4) {
+                    assert!([1, 3].contains(&court), "{} final on court {}", bracket, court);
+                }
+            }
+            assert_eq!(assigned_waves(&conn).len(), {
+                let mut unique = assigned_waves(&conn);
+                unique.sort_unstable();
+                unique.dedup();
+                unique.len()
+            });
+        }
+    }
+
+    /// Featured courts: A's final always goes on court 1, and C's final, played
+    /// at the same time, leaves it free. B is half A's size, so its final comes
+    /// a wave earlier - a pin counts from each bracket's own end, which is what
+    /// lets "B's final" find it.
+    #[test]
+    fn a_pinned_final_gets_its_court() {
+        let conn = setup(16);
+        add_bracket(&conn, "A", false, 16, 0);
+        add_bracket(&conn, "B", false, 8, 0);
+        add_bracket(&conn, "C", false, 16, 0);
+        save_plan(
+            &conn,
+            &crate::models::CourtPlan {
+                pins: vec![
+                    crate::models::CourtPin {
+                        bracket: "a".to_string(),
+                        stage: 0,
+                        courts: "1".to_string(),
+                    },
+                    crate::models::CourtPin {
+                        bracket: "B".to_string(),
+                        stage: 0,
+                        courts: "2".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+
+        for _ in 0..10 {
+            assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+            assert_eq!(round_courts(&conn, "A", 4), vec![1]);
+            assert_eq!(round_courts(&conn, "B", 3), vec![2]);
+            assert_ne!(round_courts(&conn, "C", 4), vec![1], "C's final took the featured court");
+        }
+    }
+
+    #[test]
+    fn auxiliary_courts_sit_out_the_brackets_while_there_is_room() {
+        let conn = setup(16);
+        add_bracket(&conn, "A", false, 16, 0);
+        save_plan(
+            &conn,
+            &crate::models::CourtPlan {
+                auxiliary: "9-16".to_string(),
+                spread_auxiliary: true,
+                ..Default::default()
+            },
+        );
+
+        for _ in 0..10 {
+            assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+            for (_, court) in assigned_waves(&conn) {
+                assert!(court <= 8, "a bracket game went to auxiliary court {}", court);
+            }
+        }
+    }
+
+    /// The operator can still put a game anywhere. It keeps its court, and the
+    /// bracket view is told it is off the plan.
+    #[test]
+    fn a_hand_set_court_off_the_plan_is_kept_and_flagged() {
+        let conn = setup(8);
+        add_bracket(&conn, "A", false, 8, 0);
+        save_plan(
+            &conn,
+            &crate::models::CourtPlan {
+                elimination_rounds: vec!["1-4".to_string()],
+                ..Default::default()
+            },
+        );
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+        assert!(off_plan_matches(&conn, TOURNAMENT_ID).unwrap().is_empty());
+
+        conn.execute(
+            "UPDATE bracket_matches SET court_number = 7, court_is_manual = 1 WHERE id = 'A-r1-m1'",
+            [],
+        )
+        .unwrap();
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        assert!(round_courts(&conn, "A", 1).contains(&7), "the hand-set court was moved");
+        assert_eq!(off_plan_matches(&conn, TOURNAMENT_ID).unwrap(), vec!["A-r1-m1".to_string()]);
+    }
+
+    /// Saving a plan re-draws the waves that have not started, so it takes
+    /// effect without anything being regenerated.
+    #[test]
+    fn saving_a_plan_moves_the_waves_still_to_come() {
+        let conn = setup(16);
+        add_bracket(&conn, "A", false, 16, 0);
+        assign_bracket_courts(&conn, TOURNAMENT_ID).unwrap();
+
+        courts::save_court_plan_inner(
+            &conn,
+            TOURNAMENT_ID,
+            &crate::models::CourtPlan {
+                // Two courts: AA's final, still to be drawn, is played beside A's.
+                elimination_rounds: vec!["".to_string(), "".to_string(), "".to_string(), "5,7".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let court = round_courts(&conn, "A", 4)[0];
+        assert!(court == 5 || court == 7, "the final went to court {}", court);
+    }
+
+    /// Every bracket the settings could draw is offered before the draw, each
+    /// consolante beside its own bracket - including a short last bracket.
+    #[test]
+    fn foreseen_brackets_follow_the_settings() {
+        let settings = BracketSettings {
+            advance_all: true,
+            advance_count: None,
+            bracket_size: 16,
+            has_consolante: true,
+        };
+        let shapes = settings.foresee(40);
+        let names: Vec<&str> = shapes.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["A", "AA", "B", "BB", "C", "CC"]);
+        // 16 teams play 8 matches, and their 8 losers make a bracket of 8.
+        assert_eq!(shapes[0].matches, [8, 4, 2, 1]);
+        assert_eq!(shapes[1].matches, [4, 2, 1]);
+        // The last 8 teams: a bracket of 8 and a consolante of 4.
+        assert_eq!(shapes[4].matches, [4, 2, 1]);
+        assert_eq!(shapes[5].matches, [2, 1]);
+
+        // 12 teams in a bracket of 16: four byes, so four real matches.
+        assert_eq!(BracketShape::for_teams("A".into(), false, 12).matches, [4, 4, 2, 1]);
+
+        let fpusa = BracketSettings { advance_all: false, ..settings };
+        let names: Vec<String> = fpusa.foresee(40).into_iter().map(|s| s.name).collect();
+        assert_eq!(names, ["A", "AA"]);
+    }
+
+    /// A consolante is drawn only once its bracket's first round is in, but a
+    /// featured court can name it - and its matches are counted - from the start.
+    #[test]
+    fn a_consolante_still_to_come_is_counted() {
+        let conn = setup(40);
+        add_bracket(&conn, "A", false, 16, 0);
+        add_bracket(&conn, "AA", true, 8, 0);
+        add_bracket(&conn, "B", false, 16, 0);
+
+        let demand = bracket_demand(&conn, TOURNAMENT_ID, 32, 80).unwrap();
+        assert_eq!(demand.names, ["A", "AA", "B", "BB"]);
+        assert_eq!(demand.wave_count, 4);
+        let matches: Vec<i32> = demand.waves.iter().map(|w| w.matches).collect();
+        assert_eq!(matches, [16, 16, 8, 4]);
+        let final_wave: HashSet<(String, i32)> = demand.waves[3]
+            .stages
+            .iter()
+            .map(|s| (s.bracket.clone(), s.stage))
+            .collect();
+        assert!(final_wave.contains(&("BB".to_string(), 0)), "{:?}", final_wave);
+    }
+
+    /// A plan that leaves a round fewer courts than it has matches is refused,
+    /// naming the round; a featured court the round's row leaves out still counts.
+    #[test]
+    fn a_plan_too_small_for_a_wave_is_refused() {
+        let conn = setup(40);
+        add_bracket(&conn, "A", false, 16, 0);
+        add_bracket(&conn, "B", false, 16, 0);
+        let rows = |last: &str| vec![String::new(), String::new(), String::new(), last.to_string()];
+
+        // The finals of A, B, AA and BB are played together: four matches.
+        let tight = crate::models::CourtPlan {
+            elimination_rounds: rows("1,3,5"),
+            ..Default::default()
+        };
+        let err = courts::save_court_plan_inner(&conn, TOURNAMENT_ID, &tight).unwrap_err();
+        assert!(err.starts_with("Elimination round 4"), "{}", err);
+        assert!(courts::read_court_plan(&conn, TOURNAMENT_ID).unwrap().is_none());
+
+        let featured = crate::models::CourtPlan {
+            pins: vec![crate::models::CourtPin {
+                bracket: "A".to_string(),
+                stage: 0,
+                courts: "10".to_string(),
+            }],
+            ..tight
+        };
+        courts::save_court_plan_inner(&conn, TOURNAMENT_ID, &featured).unwrap();
     }
 }

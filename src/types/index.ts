@@ -108,6 +108,43 @@ export interface TeamStanding {
   rank: number;
 }
 
+/**
+ * The operator's court rules, set before play. Court lists are the text the
+ * operator typed ("1,3,5,6-11"); the backend parses them when it draws.
+ */
+export interface CourtPlan {
+  /** Courts brought in for the event, used only when the main courts run out. */
+  auxiliary: string;
+  /** Keep anyone from playing a second game on the auxiliary courts. */
+  spreadAuxiliary: boolean;
+  /** Courts per qualifying round; a blank entry is "same as the round before". */
+  qualifyingRounds: string[];
+  /** The same per elimination round (wave), carrying on from qualifying. */
+  eliminationRounds: string[];
+  pins: CourtPin[];
+}
+
+/**
+ * How many games each round will need a court for, as far as can be told today
+ * (`court_demand` in `courts.rs`), and the brackets a featured court can name.
+ */
+export interface CourtDemand {
+  /** Games per qualifying round; 0 for a round already drawn or not yet knowable. */
+  qualifying: number[];
+  /** Per elimination wave: matches still to be given a court, and the bracket rounds it holds. */
+  elimination: { matches: number; stages: { bracket: string; stage: number }[] }[];
+  waveCount: number;
+  brackets: string[];
+}
+
+/** A featured court: one bracket's match `stage` rounds from its end. */
+export interface CourtPin {
+  bracket: string;
+  /** 0 the final, 1 the semifinals, 2 the quarterfinals. */
+  stage: number;
+  courts: string;
+}
+
 export interface Bracket {
   id: string;
   tournamentId: string;
