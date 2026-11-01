@@ -66,6 +66,7 @@ export function TeamLabelPDF({
   compact = false,
   style,
   nameStyle,
+  hyphenationCallback,
 }: {
   team: NumberedTeam | null | undefined;
   fontSize: number;
@@ -74,6 +75,8 @@ export function TeamLabelPDF({
   compact?: boolean;
   style?: object | object[];
   nameStyle?: object | object[];
+  /** How the name may break across lines; @react-pdf's own hyphenation when omitted. */
+  hyphenationCallback?: (word: string) => string[];
 }) {
   const s = teamLabelStyles(fontSize, compact);
   // Callers pass either one style or a list of conditional ones. Splatting
@@ -82,7 +85,11 @@ export function TeamLabelPDF({
   const flatten = (v: object | object[] | undefined) => (Array.isArray(v) ? v : v ? [v] : []);
 
   if (!team) {
-    return <Text style={[s.name, ...flatten(nameStyle)]}>{fallback}</Text>;
+    return (
+      <Text style={[s.name, ...flatten(nameStyle)]} hyphenationCallback={hyphenationCallback}>
+        {fallback}
+      </Text>
+    );
   }
 
   return (
@@ -90,7 +97,9 @@ export function TeamLabelPDF({
       <View style={s.chip}>
         <Text style={s.chipText}>{team.teamNumber}</Text>
       </View>
-      <Text style={[s.name, ...flatten(nameStyle)]}>{formatTeamName(team.captain)}</Text>
+      <Text style={[s.name, ...flatten(nameStyle)]} hyphenationCallback={hyphenationCallback}>
+        {formatTeamName(team.captain)}
+      </Text>
     </View>
   );
 }

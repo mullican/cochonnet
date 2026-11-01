@@ -34,7 +34,43 @@ interface PdfJob {
 /** The documents on this page, each of which picks its own paper. */
 type DocumentKey = 'courtAssignments' | 'standings' | 'brackets';
 
-export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
+type PaperSizes = Record<DocumentKey, PaperSize>;
+
+const paperSizesKey = (tournamentId: string) => `paperSizes:${tournamentId}`;
+
+/**
+ * The paper each document was last printed on for this tournament, or Letter
+ * for one never chosen. Kept in this machine's storage rather than the
+ * database: the right paper is whatever this machine's printer is loaded
+ * with, which a backup restored somewhere else knows nothing about.
+ */
+function loadPaperSizes(tournamentId: string): PaperSizes {
+  const sizes: PaperSizes = {
+    courtAssignments: DEFAULT_PAPER_SIZE,
+    standings: DEFAULT_PAPER_SIZE,
+    brackets: DEFAULT_PAPER_SIZE,
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(paperSizesKey(tournamentId)) ?? '{}');
+    for (const doc of Object.keys(sizes) as DocumentKey[]) {
+      // A size this build no longer offers falls back rather than reaching a <Page>.
+      if (PAPER_SIZE_OPTIONS.includes(saved?.[doc])) sizes[doc] = saved[doc];
+    }
+  } catch {
+    // Unreadable or unavailable storage only costs the operator a re-pick.
+  }
+  return sizes;
+}
+
+function savePaperSizes(tournamentId: string, sizes: PaperSizes) {
+  try {
+    localStorage.setItem(paperSizesKey(tournamentId), JSON.stringify(sizes));
+  } catch {
+    // As above: forgetting the choice is the worst that can happen.
+  }
+}
+
+export function ExportView({ tournamentId }: ExportViewProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const {
@@ -47,15 +83,12 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
 
   const [error, setError] = useState<string | null>(null);
 
-  // Paper is chosen per document rather than per tournament: a 32-team bracket
-  // wants 13x19 on the same afternoon the standings want Letter. Held here and
-  // not inside PdfCard, which is redefined on every render and so cannot keep
-  // state of its own.
-  const [paperSizes, setPaperSizes] = useState<Record<DocumentKey, PaperSize>>({
-    courtAssignments: DEFAULT_PAPER_SIZE,
-    standings: DEFAULT_PAPER_SIZE,
-    brackets: DEFAULT_PAPER_SIZE,
-  });
+  // Paper is chosen per document rather than once for the tournament: a 32-team
+  // bracket wants 13x19 on the same afternoon the standings want Letter. Each
+  // choice is remembered for next time. Held here and not inside PdfCard, which
+  // is redefined on every render and so cannot keep state of its own.
+  const [paperSizes, setPaperSizes] = useState(() => loadPaperSizes(tournamentId));
+  useEffect(() => setPaperSizes(loadPaperSizes(tournamentId)), [tournamentId]);
 
   // What this build can actually do. iPadOS has no "save it where you like", so
   // it offers printing in place of export; macOS offers both.
@@ -319,9 +352,11 @@ export function ExportView({ tournamentId: _tournamentId }: ExportViewProps) {
             <Select
               label={t('export.paperSize')}
               value={paperSize}
-              onValueChange={(v) =>
-                setPaperSizes((current) => ({ ...current, [docKey]: v as PaperSize }))
-              }
+              onValueChange={(v) => {
+                const next = { ...paperSizes, [docKey]: v as PaperSize };
+                setPaperSizes(next);
+                savePaperSizes(tournamentId, next);
+              }}
               disabled={disabled || busy}
             >
               {PAPER_SIZE_OPTIONS.map((size) => (

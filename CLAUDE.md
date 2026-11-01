@@ -325,9 +325,11 @@ export page carries its own size picker, and passes the choice to the document a
 `paperSize` prop. A 32-team bracket wants 13x19 on the same afternoon the standings want
 Letter, and the same standings go on Letter for the noticeboard and A3 for the wall — one
 stored setting could serve none of that. `ExportView` holds the three choices in state
-(keyed by document) rather than in the database, so they last as long as the operator is on
-the tab and start again at Letter next time. Note `PdfCard` is redefined on every render of
-`ExportView`, so it cannot hold that state itself.
+(keyed by document) and remembers each one in `localStorage` under `paperSizes:<tournamentId>`,
+so a document opens on the paper it was last printed on for that tournament (Letter until
+chosen). That is deliberately **not** the database: the right paper is whatever this machine's
+printer holds, so it is a per-machine preference and does not travel in backups. Note
+`PdfCard` is redefined on every render of `ExportView`, so it cannot hold that state itself.
 
 - `pageProps(paperSize, orientation)` supplies `<Page size>`; the six sizes are US Letter
   (the default), US Legal, US Tabloid, 13x19, A4 and A3. Never hard-code `size="A4"` again.
@@ -351,6 +353,19 @@ the tab and start again at Letter next time. Note `PdfCard` is redefined on ever
   upload accepts **PNG and JPEG only** — those are the formats `@react-pdf`'s `Image` can
   draw, so an SVG would silently come out blank — and caps at 2 MB, because the data URI
   travels in the database and in every backup file.
+- The court sheet is **landscape, two columns**, filled left column first. @react-pdf has no
+  columns, so `CourtAssignmentsPDF` paginates by hand: it measures every row up front with
+  `textWidth.ts` (Helvetica's own metrics) and deals the rows into columns. That only works
+  while the measurement and the styles agree, so the geometry lives in constants that both
+  read; change a font size or padding through them, never in the stylesheet alone. Each team
+  is drawn with `TeamLabelPDF`, the same number chip as the standings, and the chip's size is
+  read from `teamLabelStyles` rather than restated. A panaché side puts each player on a line
+  of their own, with their own chip.
+- Name cells break between words, never inside one unless the word is wider than the cell;
+  then at its own hyphen first (`splitToFit`). That hyphen break leans on a @react-pdf
+  internal: an **empty string** returned from a hyphenation callback is a break point that
+  adds no hyphen glyph. If an upgrade changes that, DANCAUSSE-TREHIN starts printing as
+  DANCAUSSE--, so re-render a hyphenated name after bumping `@react-pdf/renderer`.
 - The court sheet numbers its pages **"Game 1"**, not "Round 1" — a round is what a bracket
   has, and `pdf.round` is still what `BracketPDF` labels its columns with. They are separate
   keys (`pdf.game` / `pdf.round`) for that reason.

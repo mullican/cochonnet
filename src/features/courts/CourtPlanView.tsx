@@ -372,19 +372,22 @@ export function CourtPlanView({ tournamentId }: CourtPlanViewProps) {
                   <div className="space-y-1">
                     <div className="flex flex-wrap gap-2">
                       {slots.map((slot, j) => (
-                        <Input
-                          key={j}
-                          className="w-16"
-                          inputMode="numeric"
-                          aria-label={t('courts.pinCourt', { number: j + 1, count: slots.length })}
-                          aria-invalid={errors[j] !== null}
-                          value={slot}
-                          onChange={(e) => {
-                            const next = [...slots];
-                            next[j] = e.target.value.replace(/\D/g, '');
-                            setPin(i, { courts: next.join(',') });
-                          }}
-                        />
+                        // One court number each, so a narrow box. The width goes on
+                        // a wrapper: Input's own `w-full` beats a width passed in
+                        // `className`, and would leave it at the browser's default.
+                        <div key={j} className="w-16">
+                          <Input
+                            inputMode="numeric"
+                            aria-label={t('courts.pinCourt', { number: j + 1, count: slots.length })}
+                            aria-invalid={errors[j] !== null}
+                            value={slot}
+                            onChange={(e) => {
+                              const next = [...slots];
+                              next[j] = e.target.value.replace(/\D/g, '');
+                              setPin(i, { courts: next.join(',') });
+                            }}
+                          />
+                        </div>
                       ))}
                     </div>
                     {message && <div className="text-xs text-red-600">{message}</div>}
