@@ -1,6 +1,6 @@
 [package]
 name = "petanque-tournament"
-version = "1.5.1"
+version = "1.6.0"
 description = "Cochonnet - Pétanque Tournament Manager"
 authors = ["you"]
 edition = "2021"
