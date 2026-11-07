@@ -360,6 +360,10 @@ printer holds, so it is a per-machine preference and does not travel in backups.
 - `BracketPDF` lays itself out by hand and so also needs `contentSize(...)`: its column width
   and row spacing are derived from the chosen page, which is what lets a deep bracket
   genuinely benefit from bigger paper instead of being squeezed to the minimum.
+- `matchGeometry` gives 13x19 its own larger match boxes, text and a ruled score column.
+  Every other size keeps the compact box, so a 32-team draw still fits on Letter.
+- A bracket's header shows the tournament's **end date**, because the brackets are played on
+  the last day. `startDate` would be a day early on a two-day event.
 - **The logo stays a tournament setting** — it identifies the event, not the print run — so
   it is still on the tournament form and still read off the `tournament` prop.
 - `<PdfLogo tournament />` draws `tournaments.logo` (a data URI) absolutely in the top-right,

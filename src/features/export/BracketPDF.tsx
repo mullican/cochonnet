@@ -4,15 +4,39 @@ import { TeamLabelPDF } from './TeamLabelPDF';
 import type { PDFTranslations } from './pdfTranslations';
 import { pageProps, contentSize, PdfLogo, LOGO_BOX_COMPACT } from './pdfPage';
 
-// Compact dimensions for fitting a bracket on one page
-const MATCH_HEIGHT = 24;
 const ROUND_GAP = 25;
 const LINE_LENGTH = 12; // Horizontal line from match to vertical
 const COURT_WIDTH = 24; // The court cell at the left of every match
 
 const PAGE_PADDING = 15;
-const MAX_MATCH_WIDTH = 150;
 const MIN_MATCH_WIDTH = 70;
+
+// Compact dimensions for fitting a bracket on one page.
+const COMPACT_MATCH = {
+  height: 24,
+  maxWidth: 150,
+  fontSize: 6,
+  courtFontSize: 7,
+  scoreWidth: 14,
+  scoreRule: 0,
+};
+
+/**
+ * 13x19 is the sheet a bracket goes on the wall on, with room to spare at the
+ * compact size: a 32-team draw leaves 51pt per first-round match. These boxes
+ * use that room, which also leaves space to write in a result by hand.
+ */
+function matchGeometry(paperSize: PaperSize) {
+  if (paperSize !== '13x19') return COMPACT_MATCH;
+  return {
+    height: 42,
+    maxWidth: 240,
+    fontSize: 9,
+    courtFontSize: 9,
+    scoreWidth: 22,
+    scoreRule: 0.5,
+  };
+}
 
 // What the header and the round labels take off the top before the bracket
 // starts: ~49 for the header and its margin, ~15 for the labels, and some slack
@@ -27,9 +51,9 @@ const VERTICAL_RESERVE = 79;
  * court cell without shrinking any text - and it is why a deep bracket is worth
  * printing on larger paper: the columns stop being squeezed to the minimum.
  */
-function matchWidthFor(numRounds: number, contentWidth: number): number {
+function matchWidthFor(numRounds: number, contentWidth: number, maxWidth: number): number {
   const fitted = Math.floor((contentWidth - (numRounds - 1) * ROUND_GAP) / numRounds);
-  return Math.max(MIN_MATCH_WIDTH, Math.min(MAX_MATCH_WIDTH, fitted));
+  return Math.max(MIN_MATCH_WIDTH, Math.min(maxWidth, fitted));
 }
 
 const styles = StyleSheet.create({
@@ -81,7 +105,6 @@ const styles = StyleSheet.create({
   },
   court: {
     width: COURT_WIDTH,
-    height: MATCH_HEIGHT,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#eeeeee',
@@ -89,7 +112,6 @@ const styles = StyleSheet.create({
     borderRightColor: '#999',
   },
   courtText: {
-    fontSize: 7,
     fontWeight: 'bold',
     color: '#333',
   },
@@ -99,9 +121,9 @@ const styles = StyleSheet.create({
   matchTeam: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 3,
     paddingVertical: 1,
-    height: MATCH_HEIGHT / 2,
     borderBottomWidth: 0.5,
     borderBottomColor: '#ddd',
   },
@@ -112,12 +134,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#e8f5e9',
   },
   teamName: {
-    fontSize: 6,
     flex: 1,
   },
+  scoreCell: {
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    borderLeftColor: '#ccc',
+  },
   score: {
-    fontSize: 6,
-    width: 14,
     textAlign: 'right',
     fontWeight: 'bold',
   },
@@ -176,8 +200,11 @@ export function BracketPDF({
   const getTeam = (teamId: string | null | undefined) =>
     teamId ? teams.find((tm) => tm.id === teamId) : undefined;
 
+  // Dates are stored as bare YYYY-MM-DD. `new Date` reads that as midnight UTC,
+  // which is the evening before anywhere in the Americas, so it is given a
+  // local time to read instead.
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    return new Date(`${dateString.split('T')[0]}T00:00:00`).toLocaleDateString();
   };
 
   const getMatchesForBracket = (bracketId: string) => {
@@ -204,33 +231,48 @@ export function BracketPDF({
     return `${t.courtAbbrev}${match.courtNumber}`;
   };
 
+  const geometry = matchGeometry(paperSize);
+  const teamRowHeight = { height: geometry.height / 2 };
+  const scoreCell = (score: number | null) => (
+    <View
+      style={[
+        styles.scoreCell,
+        { width: geometry.scoreWidth, borderLeftWidth: geometry.scoreRule },
+      ]}
+    >
+      <Text style={[styles.score, { fontSize: geometry.fontSize }]}>
+        {score !== null ? score : ''}
+      </Text>
+    </View>
+  );
+
   const renderMatch = (match: BracketMatch, matchWidth: number) => (
     <View style={[styles.match, { width: matchWidth }]}>
-      <View style={styles.court}>
-        <Text style={styles.courtText}>{courtLabel(match)}</Text>
+      <View style={[styles.court, { height: geometry.height }]}>
+        <Text style={[styles.courtText, { fontSize: geometry.courtFontSize }]}>{courtLabel(match)}</Text>
       </View>
       <View style={styles.matchTeams}>
         <View
           style={[
             styles.matchTeam,
+            teamRowHeight,
             match.winnerId !== null && match.winnerId === match.team1Id ? styles.winner : {},
           ]}
         >
           <TeamLabelPDF
             team={getTeam(match.team1Id)}
-            fontSize={6}
+            fontSize={geometry.fontSize}
             compact
             fallback={t.tbd}
             style={styles.teamName}
             nameStyle={!match.team1Id ? styles.tbd : {}}
           />
-          <Text style={styles.score}>
-            {match.team1Score !== null ? match.team1Score : ''}
-          </Text>
+          {scoreCell(match.team1Score)}
         </View>
         <View
           style={[
             styles.matchTeam,
+            teamRowHeight,
             styles.matchTeamBottom,
             match.winnerId !== null && match.winnerId === match.team2Id ? styles.winner : {},
             match.isBye ? styles.bye : {},
@@ -238,15 +280,13 @@ export function BracketPDF({
         >
           <TeamLabelPDF
             team={match.isBye ? undefined : getTeam(match.team2Id)}
-            fontSize={6}
+            fontSize={geometry.fontSize}
             compact
             fallback={match.isBye ? t.bye : t.tbd}
             style={styles.teamName}
             nameStyle={[!match.team2Id ? styles.tbd : {}, match.isBye ? styles.bye : {}]}
           />
-          <Text style={styles.score}>
-            {match.isBye ? '' : match.team2Score !== null ? match.team2Score : ''}
-          </Text>
+          {scoreCell(match.isBye ? null : match.team2Score)}
         </View>
       </View>
     </View>
@@ -284,7 +324,7 @@ export function BracketPDF({
         const bracketMatches = getMatchesForBracket(bracket.id);
         const numRounds = Math.log2(bracket.size);
         const firstRoundMatchCount = bracket.size / 2;
-        const matchWidth = matchWidthFor(numRounds, content.width);
+        const matchWidth = matchWidthFor(numRounds, content.width, geometry.maxWidth);
 
         // Vertical spacing: whatever the chosen paper leaves once the header
         // and the round labels have taken their share.
@@ -301,7 +341,7 @@ export function BracketPDF({
                     draw to speak of - each bracket is a concours in its own
                     right - so the consolante keeps its name but loses the label. */}
                 {bracket.isConsolante && !tournament.advanceAll ? t.consolante : t.concours}{' '}
-                {bracket.name} | {formatDate(tournament.startDate)} | {t.courtLegend}
+                {bracket.name} | {formatDate(tournament.endDate)} | {t.courtLegend}
               </Text>
             </View>
 
@@ -315,7 +355,7 @@ export function BracketPDF({
                 const spacingMultiplier = Math.pow(2, roundIdx);
                 const matchSpacing = matchSpacingRound1 * spacingMultiplier;
                 // Center the match vertically within its spacing slot
-                const verticalPadding = (matchSpacing - MATCH_HEIGHT) / 2;
+                const verticalPadding = (matchSpacing - geometry.height) / 2;
 
                 return (
                   <View key={roundNumber} style={styles.roundColumn}>
@@ -334,18 +374,18 @@ export function BracketPDF({
                             <View style={[styles.matchRow, { marginTop: verticalPadding }]}>
                               {renderMatch(match, matchWidth)}
                               {showLines && (
-                                <View style={[styles.lineContainer, { height: MATCH_HEIGHT }]}>
+                                <View style={[styles.lineContainer, { height: geometry.height }]}>
                                   {/* Horizontal line from this match */}
-                                  <View style={[styles.hLine, { top: MATCH_HEIGHT / 2 }]} />
+                                  <View style={[styles.hLine, { top: geometry.height / 2 }]} />
                                   {/* Vertical line segment */}
                                   {isTopOfPair ? (
-                                    <View style={[styles.vLine, { top: MATCH_HEIGHT / 2, height: lineHeight }]} />
+                                    <View style={[styles.vLine, { top: geometry.height / 2, height: lineHeight }]} />
                                   ) : (
-                                    <View style={[styles.vLine, { top: MATCH_HEIGHT / 2 - lineHeight, height: lineHeight }]} />
+                                    <View style={[styles.vLine, { top: geometry.height / 2 - lineHeight, height: lineHeight }]} />
                                   )}
                                   {/* Horizontal line to next match (only on bottom of pair) */}
                                   {!isTopOfPair && (
-                                    <View style={[styles.hLineToNext, { top: MATCH_HEIGHT / 2 - lineHeight }]} />
+                                    <View style={[styles.hLineToNext, { top: geometry.height / 2 - lineHeight }]} />
                                   )}
                                 </View>
                               )}
