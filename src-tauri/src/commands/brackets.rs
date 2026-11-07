@@ -323,6 +323,8 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
         ));
     }
 
+    let settings = BracketSettings { advance_all, advance_count, bracket_size, has_consolante };
+
     // Create brackets based on bracket size
     let mut bracket_idx = 0;
     let mut start_idx = 0;
@@ -339,23 +341,16 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
             break;
         }
 
-        let bracket_name = bracket_name(bracket_idx);
+        let name = bracket_name(bracket_idx);
 
-        // Create main bracket
-        let bracket_id = Uuid::new_v4().to_string();
-        // Store power-of-2 bracket size for proper round calculation in UI
-        let power_of_2_size = (bracket_teams.len() as f64).log2().ceil().exp2() as i32;
-        conn.execute(
-            r#"
-            INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
-            VALUES (?1, ?2, ?3, 0, ?4, 0, ?5)
-            "#,
-            params![bracket_id, tournament_id, bracket_name, power_of_2_size, now],
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Create matches for this bracket with random pairing
-        create_bracket_matches(conn, &bracket_id, &bracket_teams)?;
+        // A short last bracket may be split in two, the lower ranks forming
+        // the second bracket from the start.
+        let partner = settings.leftover_partner(bracket_teams.len() as i32).unwrap_or(0) as usize;
+        let (upper, lower) = bracket_teams.split_at(bracket_teams.len() - partner);
+        insert_main_bracket(conn, tournament_id, &name, upper, &now)?;
+        if !lower.is_empty() {
+            insert_main_bracket(conn, tournament_id, &doubled_name(&name), lower, &now)?;
+        }
 
         start_idx = end_idx;
         bracket_idx += 1;
@@ -364,6 +359,34 @@ fn build_brackets(conn: &rusqlite::Connection, tournament_id: &str) -> Result<()
     assign_bracket_courts(conn, tournament_id)?;
 
     Ok(())
+}
+
+fn insert_main_bracket(
+    conn: &rusqlite::Connection,
+    tournament_id: &str,
+    name: &str,
+    teams: &[&Team],
+    now: &str,
+) -> Result<(), String> {
+    let bracket_id = Uuid::new_v4().to_string();
+    // Store power-of-2 bracket size for proper round calculation in UI
+    let power_of_2_size = (teams.len() as f64).log2().ceil().exp2() as i32;
+    conn.execute(
+        r#"
+        INSERT INTO brackets (id, tournament_id, name, is_consolante, size, is_complete, created_at)
+        VALUES (?1, ?2, ?3, 0, ?4, 0, ?5)
+        "#,
+        params![bracket_id, tournament_id, name, power_of_2_size, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Create matches for this bracket with random pairing
+    create_bracket_matches(conn, &bracket_id, teams)
+}
+
+/// A consolante's name, and the name of a split bracket's partner: A -> AA.
+fn doubled_name(name: &str) -> String {
+    format!("{0}{0}", name)
 }
 
 /// The name of the `index`th main bracket (from 0): A to H, then numbered.
@@ -802,7 +825,15 @@ pub fn update_match_score(
     team2_score: i32,
 ) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    record_match_score(&conn, &match_id, team1_score, team2_score)
+}
 
+fn record_match_score(
+    conn: &rusqlite::Connection,
+    match_id: &str,
+    team1_score: i32,
+    team2_score: i32,
+) -> Result<(), String> {
     // Get match details
     let (bracket_id, team1_id, team2_id, next_match_id, match_number, round_number): (
         String,
@@ -1041,6 +1072,19 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
         return Ok(());
     }
 
+    // The lower half of a split bracket is a main bracket with no consolante
+    // of its own, and the upper half finds its name taken by it further down.
+    let is_split_partner: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM brackets WHERE tournament_id = ?1 AND name || name = ?2",
+            params![tournament_id, bracket_name],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if is_split_partner {
+        return Ok(());
+    }
+
     // Check if tournament has consolante enabled and get advance_all setting
     let (has_consolante, advance_all): (bool, bool) = conn
         .query_row(
@@ -1062,7 +1106,7 @@ fn check_and_create_consolante(conn: &rusqlite::Connection, bracket_id: &str) ->
 
     // Check if consolante bracket already exists
     // Consolante name doubles the bracket letter: A -> AA, B -> BB, etc.
-    let consolante_name = format!("{}{}", bracket_name, bracket_name);
+    let consolante_name = doubled_name(&bracket_name);
     let consolante_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM brackets WHERE tournament_id = ?1 AND name = ?2",
@@ -1310,7 +1354,7 @@ impl BracketShape {
     /// bracket's first-round losers, if there are enough of them.
     fn consolante(&self) -> Option<Self> {
         let losers = *self.matches.first()?;
-        (losers >= 2).then(|| Self::for_teams(format!("{0}{0}", self.name), true, losers))
+        (losers >= 2).then(|| Self::for_teams(doubled_name(&self.name), true, losers))
     }
 }
 
@@ -1345,6 +1389,25 @@ impl BracketSettings {
         self.advance_all && self.has_consolante
     }
 
+    /// How many of a last bracket's `teams` form a second bracket straight
+    /// away, when it is split instead of waiting on its losers for a consolante.
+    ///
+    /// With every team seeded into a bracket and consolantes on, a last bracket
+    /// that comes up short has too few round 1 games to feed a consolante worth
+    /// playing: 20 teams in 32 places is 4 games, so a consolante of 4. So the
+    /// lower ranks are split off instead. The second bracket takes the largest
+    /// power of two that leaves the first at least as many teams, so it is a
+    /// full bracket with no byes: 20 teams make 12 (4 games and 4 byes) and 8.
+    /// Each then plays from the first round of play, with no consolante.
+    ///
+    /// A leftover that already fills a bracket has no byes to avoid, so it stays
+    /// whole, and so does one too small to leave two brackets.
+    fn leftover_partner(&self, teams: i32) -> Option<i32> {
+        let short = teams < self.bracket_size && teams.count_ones() > 1;
+        let half = teams / 2;
+        (self.consolantes_follow() && short && half >= 2).then(|| 1 << half.ilog2())
+    }
+
     /// The brackets `build_brackets` would draw for `teams` ranked teams, and
     /// the consolantes that would follow from them.
     fn foresee(&self, teams: i32) -> Vec<BracketShape> {
@@ -1370,12 +1433,19 @@ impl BracketSettings {
         // A last chunk of one team is not a bracket, as in `build_brackets`.
         while advancing - start >= 2 {
             let chunk = (advancing - start).min(self.bracket_size);
-            let shape = BracketShape::for_teams(bracket_name(index), false, chunk);
+            let name = bracket_name(index);
             index += 1;
+            start += chunk;
+            if let Some(partner) = self.leftover_partner(chunk) {
+                let partner_name = doubled_name(&name);
+                shapes.push(BracketShape::for_teams(name, false, chunk - partner));
+                shapes.push(BracketShape::for_teams(partner_name, false, partner));
+                continue;
+            }
+            let shape = BracketShape::for_teams(name, false, chunk);
             let consolante = shape.consolante().filter(|_| self.consolantes_follow());
             shapes.push(shape);
             shapes.extend(consolante);
-            start += chunk;
         }
         shapes
     }
@@ -1387,7 +1457,10 @@ fn drawn_shapes(
     tournament_id: &str,
 ) -> Result<(Vec<BracketShape>, HashSet<i32>), String> {
     let matches = load_court_candidates(conn, tournament_id, None)?;
-    let started: HashSet<i32> = matches.iter().filter(|m| m.played).map(|m| m.wave).collect();
+    // A bye is scored when it is drawn, so it says nothing about whether its
+    // wave is on the ground.
+    let started: HashSet<i32> =
+        matches.iter().filter(|m| m.played && !m.is_bye).map(|m| m.wave).collect();
 
     let mut shapes: Vec<BracketShape> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
@@ -1466,6 +1539,8 @@ pub(crate) fn bracket_demand(
             let coming: Vec<BracketShape> = shapes
                 .iter()
                 .filter(|s| !s.is_consolante)
+                // The lower half of a split bracket has no consolante.
+                .filter(|s| !drawn.iter().any(|name| doubled_name(name) == s.name))
                 .filter_map(BracketShape::consolante)
                 .filter(|c| !drawn.contains(&c.name))
                 .collect();
@@ -1835,6 +1910,187 @@ mod tests {
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
+    }
+
+    /// The second bracket of a split: the largest power of two that leaves the
+    /// first at least as many teams, for any bracket size.
+    #[test]
+    fn a_short_last_bracket_splits_by_the_largest_full_bracket_that_fits() {
+        let settings = BracketSettings {
+            advance_all: true,
+            advance_count: None,
+            bracket_size: 32,
+            has_consolante: true,
+        };
+        for (teams, partner) in [
+            (5, 2), (6, 2), (7, 2), (9, 4), (12, 4), (15, 4), (17, 8),
+            (19, 8), (20, 8), (24, 8), (25, 8), (28, 8), (31, 8),
+        ] {
+            assert_eq!(settings.leftover_partner(teams), Some(partner), "{} teams", teams);
+        }
+        // A full bracket stays whole, whatever its size, and so do 2 and 3 teams.
+        for teams in [2, 3, 4, 8, 16, 32] {
+            assert_eq!(settings.leftover_partner(teams), None, "{} teams", teams);
+        }
+        for teams in 5..32 {
+            if let Some(partner) = settings.leftover_partner(teams) {
+                assert!(partner.count_ones() == 1 && teams - partner >= partner, "{} teams", teams);
+                // And it is the largest: the next power of two would leave too few.
+                assert!(partner * 2 > teams / 2, "{} teams", teams);
+            }
+        }
+        // It needs both settings on.
+        let without_consolante = BracketSettings { has_consolante: false, ..settings };
+        assert_eq!(without_consolante.leftover_partner(20), None);
+        let top_teams_only = BracketSettings { advance_all: false, ..without_consolante };
+        assert_eq!(top_teams_only.leftover_partner(20), None);
+        // "Short" is relative to the bracket size in use.
+        let smaller = BracketSettings { bracket_size: 16, advance_all: true, has_consolante: true, advance_count: None };
+        assert_eq!(smaller.leftover_partner(12), Some(4));
+        assert_eq!(smaller.leftover_partner(16), None);
+    }
+
+    /// What one bracket holds: its size, whether it is a consolante, and the
+    /// teams in round 1 with how many games and byes they make.
+    fn bracket_opening(conn: &Connection, name: &str) -> (i32, bool, Vec<String>, i32, i32) {
+        let (id, size, is_consolante): (String, i32, bool) = conn
+            .query_row(
+                "SELECT id, size, is_consolante FROM brackets WHERE name = ?1",
+                params![name],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i32>(2)? != 0)),
+            )
+            .unwrap();
+        let mut stmt = conn
+            .prepare("SELECT team1_id, team2_id, is_bye FROM bracket_matches WHERE bracket_id = ?1 AND round_number = 1")
+            .unwrap();
+        let rows: Vec<(Option<String>, Option<String>, bool)> = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i32>(2)? != 0)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let games = rows.iter().filter(|m| !m.2).count() as i32;
+        let byes = rows.iter().filter(|m| m.2).count() as i32;
+        let mut teams: Vec<String> =
+            rows.into_iter().flat_map(|(a, b, _)| a.into_iter().chain(b)).collect();
+        teams.sort_by_key(|t| t[4..].parse::<i32>().unwrap());
+        (size, is_consolante, teams, games, byes)
+    }
+
+    fn play_round_one(conn: &Connection, name: &str) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.id FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id \
+                 WHERE b.name = ?1 AND m.round_number = 1 AND m.is_bye = 0",
+            )
+            .unwrap();
+        let ids: Vec<String> =
+            stmt.query_map(params![name], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        for id in ids {
+            record_match_score(conn, &id, 13, 5).unwrap();
+        }
+    }
+
+    fn demand(conn: &Connection, field: i32) -> Vec<i32> {
+        bracket_demand(conn, TOURNAMENT_ID, field, field).unwrap().waves.iter().map(|w| w.matches).collect()
+    }
+
+    /// The 2026 Amelia Island Open: 147 or 148 teams in brackets of 32 leave 19
+    /// or 20. E and EE are both there from the draw, the lower ranks in EE, and
+    /// A to D go on exactly as before.
+    #[test]
+    fn a_short_last_bracket_is_split_into_two_from_the_start() {
+        for (field, upper, games, byes, waves) in [
+            (147, 11, 3, 5, [71, 70, 35, 17, 8]),
+            (148, 12, 4, 4, [72, 70, 35, 17, 8]),
+        ] {
+            let conn = setup(74);
+            add_ranked_teams(&conn, field);
+            configure(&conn, true, true, 32);
+            assert_eq!(demand(&conn, field), waves, "foreseen, {} teams", field);
+
+            build_brackets(&conn, TOURNAMENT_ID).unwrap();
+            let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
+            assert_eq!(names, ["A", "B", "C", "D", "E", "EE"], "{} teams", field);
+            // What the court plan foresaw is what was drawn.
+            assert_eq!(demand(&conn, field), waves, "drawn, {} teams", field);
+
+            let ranks = |from: i32, to: i32| (from..=to).map(|i| format!("team{}", i)).collect::<Vec<_>>();
+            let split = 128 + upper;
+            assert_eq!(
+                bracket_opening(&conn, "E"),
+                (16, false, ranks(129, split), games, byes),
+                "{} teams", field
+            );
+            assert_eq!(
+                bracket_opening(&conn, "EE"),
+                (8, false, ranks(split + 1, field), 4, 0),
+                "{} teams", field
+            );
+
+            // Neither one grows a consolante when its first round is played.
+            play_round_one(&conn, "E");
+            play_round_one(&conn, "EE");
+            assert_eq!(bracket_rows(&conn).len(), 6, "{} teams", field);
+
+            // A still does, from its losers, one round behind.
+            play_round_one(&conn, "A");
+            let aa = bracket_opening(&conn, "AA");
+            assert_eq!((aa.0, aa.1, aa.2.len()), (16, true, 16), "{} teams", field);
+        }
+    }
+
+    /// A leftover that fills a bracket stays one bracket, with its consolante
+    /// from its losers. Nothing is split without consolantes either.
+    #[test]
+    fn a_full_leftover_and_a_tournament_without_consolantes_are_not_split() {
+        let conn = setup(74);
+        add_ranked_teams(&conn, 144);
+        configure(&conn, true, true, 32);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        assert_eq!(bracket_rows(&conn).len(), 5);
+        assert_eq!(bracket_opening(&conn, "E").0, 16);
+        play_round_one(&conn, "E");
+        let ee = bracket_opening(&conn, "EE");
+        assert_eq!((ee.0, ee.1, ee.2.len()), (8, true, 8));
+
+        let conn = setup(74);
+        add_ranked_teams(&conn, 147);
+        configure(&conn, true, false, 32);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        assert_eq!(bracket_rows(&conn).len(), 5);
+        let e = bracket_opening(&conn, "E");
+        assert_eq!((e.0, e.3, e.4), (32, 3, 13));
+
+        // Consolantes on, but only the top teams go through: no leftover at all.
+        let conn = setup(74);
+        add_ranked_teams(&conn, 147);
+        configure(&conn, false, true, 32);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["A", "AA"]);
+    }
+
+    /// The split is by the bracket's own size, not the numbers of one event: a
+    /// field too small to fill the first bracket splits that one.
+    #[test]
+    fn the_split_follows_the_field_and_the_bracket_size() {
+        let conn = setup(40);
+        add_ranked_teams(&conn, 20);
+        configure(&conn, true, true, 32);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["A", "AA"]);
+        assert_eq!(bracket_opening(&conn, "A").2.len(), 12);
+        assert_eq!(bracket_opening(&conn, "AA").2.len(), 8);
+
+        let conn = setup(40);
+        add_ranked_teams(&conn, 28);
+        configure(&conn, true, true, 16);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["A", "B", "BB"]);
+        assert_eq!(bracket_opening(&conn, "B").2.len(), 8);
+        assert_eq!(bracket_opening(&conn, "BB").2.len(), 4);
     }
 
     /// Nine advancing teams with a bracket size of eight leaves one team who

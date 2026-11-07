@@ -1,0 +1,72 @@
+#!/bin/sh
+# Makes `git tag v1.6.0` a release: bumps every version file to 1.6.0, commits
+# that as "1.6.0", and moves the tag onto the new commit. Push the commit and
+# the tag together with `git push origin HEAD v1.6.0`. (`--follow-tags` would
+# leave a lightweight tag behind: it only pushes annotated ones.)
+#
+# Git has no hook for creating a tag. reference-transaction runs for every ref
+# update instead - commits, fetches, branch moves - so this acts only on what a
+# release looks like: a brand-new tag named vX.Y.Z, pointing at HEAD, in a clean
+# working tree. A tag that arrives by fetch, or is put on an older commit, is
+# left exactly as it is.
+#
+# Enabled by `git config core.hooksPath .githooks`, which `npm install` runs
+# (package.json's "prepare" script).
+
+[ "$1" = committed ] || exit 0
+# Everything this hook does to refs - the commit, the re-tag, removing a tag -
+# runs it again. Those runs have nothing to do.
+[ -n "$COCHONNET_VERSION_BUMP" ] && exit 0
+
+zero=0000000000000000000000000000000000000000
+# Read every update before running anything: the git commands below would
+# otherwise read the rest of this hook's stdin.
+updates=$(cat)
+export COCHONNET_VERSION_BUMP=1
+
+echo "$updates" | while read -r old new ref; do
+  case "$ref" in refs/tags/v*) ;; *) continue ;; esac
+  [ "$old" = "$zero" ] && [ "$new" != "$zero" ] || continue
+
+  tag=${ref#refs/tags/}
+  version=${tag#v}
+  echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || continue
+  [ "$(git rev-parse "$new^{commit}")" = "$(git rev-parse HEAD)" ] || continue
+
+  # The hook may run from a GUI client, without the shell's nvm setup.
+  if ! node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)' 2>/dev/null; then
+    [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" && nvm use >/dev/null 2>&1
+  fi
+
+  if node scripts/sync-version.mjs --check "$version" >/dev/null 2>&1; then
+    continue # Already at this version, as after `npm version`.
+  fi
+
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    git tag -d "$tag" >/dev/null
+    echo "Removed tag $tag: there are uncommitted changes, and the version bump" >&2
+    echo "would have been committed with them. Commit or stash, then tag again." >&2
+    continue
+  fi
+
+  annotated=$(git cat-file -t "$new")
+  message=$(git tag -l --format='%(contents)' "$tag")
+
+  if ! node scripts/sync-version.mjs "$version" </dev/null; then
+    git checkout -- . >/dev/null 2>&1
+    git tag -d "$tag" >/dev/null
+    echo "Removed tag $tag: the version files could not be updated (see above)." >&2
+    continue
+  fi
+
+  git commit -q -a -m "$version" </dev/null
+  if [ "$annotated" = tag ]; then
+    git tag -f -a "$tag" -m "$message" </dev/null >/dev/null
+  else
+    git tag -f "$tag" </dev/null >/dev/null
+  fi
+  echo "Bumped the version to $version, committed it, and moved $tag onto that commit."
+  echo "Release with: git push origin HEAD $tag"
+done
+
+exit 0

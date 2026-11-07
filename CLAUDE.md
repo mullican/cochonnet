@@ -312,6 +312,26 @@ rather than decorative:
 - `src-tauri/src/commands/brackets.rs` - Bracket generation and match updates
 - Supports consolante (consolation) brackets
 
+**A short last bracket is split in two** (`leftover_partner` in `brackets.rs`). Consolantes
+normally come from a main bracket's round 1 losers, one round behind. That fails a last
+bracket that comes up short: 20 teams in 32 places is 4 games, so a consolante of 4. So with
+*All Teams Seeded into Brackets* and *Consolante* both on, the leftover is split at the draw.
+The lower ranks form a second bracket, named as the consolante would be (E and EE), which
+takes the largest power of two that leaves the first at least as many teams. It is therefore
+a full bracket, and the first takes the rest with its byes in round 1: 20 teams make 12
+(4 games, 4 byes) and 8; 19 make 11 and 8. The rule is generic, in the bracket size and in
+which bracket happens to be last, so a field of 20 in brackets of 32 makes A and AA.
+
+- Both are **main brackets** (`is_consolante = 0`) so both play from the first round of play,
+  and `play_wave` needs no exception. Neither gets a consolante. `check_and_create_consolante`
+  recognises the second by its name being another bracket's doubled, and the first finds its
+  consolante's name already taken; `bracket_demand` applies the same test.
+- **A leftover that fills a bracket is not split** (no byes to avoid): 16 teams at 144 are E
+  with a consolante EE as usual. Nor is anything split with Consolante off, or when only the
+  top teams advance.
+- This moves E's rounds relative to the others, so **featured courts that suit one roster can
+  clash at another**. Saving a plan does not check two pins sharing a court in a wave.
+
 ### PDF Export
 - `src/features/export/pdfPage.tsx` - Paper sizes and the logo box, shared by all three documents
 - `src/features/export/CourtAssignmentsPDF.tsx` - Court sheet for each round
@@ -460,7 +480,7 @@ panaché database round-trip (sides persist, a shared score lands on each member
 solver and court plans (auxiliary courts, per-round courts, pins, the range parser), round
 generation against a real database (withdrawal, byes, the configured-round cap,
 and both sides of the results-dependency guard — Swiss waits, Swiss Hotel draws ahead),
-the idempotency of `complete_round`, reopening a round (standings checked against the games), bracket court assignment, the backup round-trip, and the
+the idempotency of `complete_round`, reopening a round (standings checked against the games), bracket court assignment, splitting a short last bracket, the backup round-trip, and the
 schema migrations.
 
 Court and bracket tests assert the *invariant*, never the exact numbering: which game gets
@@ -479,6 +499,33 @@ assert the new constraint is present, not just that the data is intact.
 - `npm run tauri dev` for development
 - `npm run tauri build` for production build
 - GitHub Actions workflow in `.github/workflows/release.yml` builds on tag push
+
+### Releasing
+
+Tag a clean commit and push both: `git tag v1.6.0 && git push origin HEAD v1.6.0`. The tag
+is the release; the version files follow it. (Not `--follow-tags`: it skips lightweight tags.)
+
+Git has no hook for creating a tag, so `.githooks/reference-transaction` watches every ref
+update and acts only on what a release looks like: a **new** `vX.Y.Z` tag pointing at
+**HEAD** in a working tree with no uncommitted changes to tracked files. It then runs
+`scripts/sync-version.mjs X.Y.Z` (package.json, package-lock.json, tauri.conf.json,
+Cargo.toml, Cargo.lock), commits that as `X.Y.Z`, and moves the tag onto the new commit,
+keeping an annotated tag's message. Tags that arrive by fetch, or that go on an older commit,
+are left alone. With uncommitted changes it **removes** the tag again and says why, rather
+than commit the bump alongside someone's work in progress. The hook finds Node through nvm
+and `.nvmrc` when it is not on PATH, as from a GUI git client.
+
+- The hooks are enabled by `git config core.hooksPath .githooks`, which package.json's
+  `prepare` script runs on `npm install`. A fresh clone that has not run it creates plain tags.
+- `npm version <x.y.z>` still works and lands in the same place: its `version` script syncs
+  the files, npm commits and tags, and the hook sees the files already match.
+- The release workflow's first step refuses a tag that does not match `package.json`, or
+  files out of step with it, before any release is created. That is the backstop for a tag
+  made without the hook. The workflow used to patch the version in from the tag at build
+  time instead, which is why every local build called itself 0.1.0.
+
+The macOS About item is relabelled in `app_menu` (`lib.rs`): macOS names it after the running
+process, which under `tauri dev` is the crate name, `petanque-tournament`.
 
 ### Printing
 

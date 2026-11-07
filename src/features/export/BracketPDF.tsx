@@ -213,7 +213,7 @@ export function BracketPDF({
         <View
           style={[
             styles.matchTeam,
-            match.winnerId === match.team1Id ? styles.winner : {},
+            match.winnerId !== null && match.winnerId === match.team1Id ? styles.winner : {},
           ]}
         >
           <TeamLabelPDF
@@ -232,7 +232,7 @@ export function BracketPDF({
           style={[
             styles.matchTeam,
             styles.matchTeamBottom,
-            match.winnerId === match.team2Id ? styles.winner : {},
+            match.winnerId !== null && match.winnerId === match.team2Id ? styles.winner : {},
             match.isBye ? styles.bye : {},
           ]}
         >

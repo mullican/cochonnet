@@ -7,7 +7,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Only macOS gets a menu bar by default, so only macOS needs this.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -77,4 +82,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Tauri's default menu, with the About item named after the product.
+///
+/// macOS labels that item with the running process's name. An installed app
+/// takes it from its bundle, but `tauri dev` runs the bare binary, which is
+/// named after the crate, so the item read "About petanque-tournament".
+#[cfg(target_os = "macos")]
+fn app_menu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{Menu, MenuItemKind};
+
+    let menu = Menu::default(handle)?;
+    // The application menu comes first, and About is the first thing in it.
+    if let Some(MenuItemKind::Submenu(app)) = menu.items()?.into_iter().next() {
+        if let Some(MenuItemKind::Predefined(about)) = app.items()?.into_iter().next() {
+            about.set_text(format!("About {}", handle.package_info().name))?;
+        }
+    }
+    Ok(menu)
 }

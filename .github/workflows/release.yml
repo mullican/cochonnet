@@ -13,6 +13,23 @@ jobs:
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The installers take their version from the files in the tagged commit,
+      # so a tag those files disagree with would publish a "v1.6.0" release
+      # whose app calls itself something else. The tag hook in .githooks/ (or
+      # `npm version`) makes the tag and the version together; this refuses a
+      # tag made without it, before any release exists.
+      - name: Check the tag matches the version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION. Tag a clean commit with the hooks enabled (npm install sets them up), or run: npm version <x.y.z>"
+            exit 1
+          fi
+          node scripts/sync-version.mjs --check
+
       # Starts as a draft on purpose. The three platform builds take upwards of
       # fifteen minutes and upload their installers as they finish, so a release
       # that is live from the start is a visible, empty release for most of that
@@ -53,25 +70,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Update version from tag (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "Updating version to $VERSION"
-          npm version $VERSION --no-git-tag-version
-          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-
-      - name: Update version from tag (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $VERSION = $env:GITHUB_REF_NAME -replace '^v', ''
-          Write-Host "Updating version to $VERSION"
-          npm version $VERSION --no-git-tag-version
-          $json = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
-          $json.version = $VERSION
-          $json | ConvertTo-Json -Depth 100 | Set-Content src-tauri/tauri.conf.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

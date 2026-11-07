@@ -292,7 +292,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                           {/* Team 1 */}
                           <div
                             className={`flex justify-between items-center ${
-                              match.winnerId === match.team1Id ? 'font-bold' : ''
+                              match.winnerId !== null && match.winnerId === match.team1Id ? 'font-bold' : ''
                             }`}
                           >
                             <span className="truncate text-sm">
@@ -308,7 +308,7 @@ export function BracketDisplay({ bracketId, bracketSize }: BracketDisplayProps) 
                           {/* Team 2 */}
                           <div
                             className={`flex justify-between items-center ${
-                              match.winnerId === match.team2Id ? 'font-bold' : ''
+                              match.winnerId !== null && match.winnerId === match.team2Id ? 'font-bold' : ''
                             }`}
                           >
                             <span className="truncate text-sm">
