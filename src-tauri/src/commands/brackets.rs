@@ -662,6 +662,23 @@ pub(crate) fn assign_bracket_courts(
     Ok(())
 }
 
+/// The seed in each first-round place of a bracket of `size`, top to bottom;
+/// places `2k` and `2k + 1` meet in match `k`.
+///
+/// This is the standard seeded draw. Each pair of seeds adds up to `size + 1`,
+/// so the top seed meets the bottom one, and doubling the bracket replaces
+/// every seed with itself and its new opponent, which keeps the top seeds
+/// apart: if the better seed always wins, 1 and 2 meet only in the final, the
+/// top four only in the semi-finals, and the top eight only in the quarters.
+fn seeding_order(size: usize) -> Vec<usize> {
+    let mut order = vec![1];
+    while order.len() < size {
+        let doubled = order.len() * 2;
+        order = order.iter().flat_map(|&seed| [seed, doubled + 1 - seed]).collect();
+    }
+    order
+}
+
 fn create_bracket_matches(
     conn: &rusqlite::Connection,
     bracket_id: &str,
@@ -675,19 +692,13 @@ fn create_bracket_matches(
 
     // Calculate bracket size (next power of 2)
     let bracket_size = (num_teams as f64).log2().ceil().exp2() as usize;
-    let num_byes = bracket_size - num_teams;
     let num_rounds = (bracket_size as f64).log2() as i32;
     let first_round_match_count = bracket_size / 2;
 
-    // Teams are already sorted by rank (from standings)
-    // Top-ranked teams get BYEs, remaining teams play in round 1
-    let bye_teams: Vec<&Team> = teams.iter().take(num_byes).cloned().collect();
-    let playing_teams: Vec<&Team> = teams.iter().skip(num_byes).cloned().collect();
-
-    // Shuffle playing teams randomly for first round pairing
-    let mut rng = rand::thread_rng();
-    let mut shuffled_playing: Vec<&Team> = playing_teams;
-    shuffled_playing.shuffle(&mut rng);
+    // Teams are already sorted by rank (from standings), so a team's seed is
+    // its place in the list. A seed past the last team is a BYE: the byes go
+    // to the top seeds, spread across the bracket the same way they are.
+    let order = seeding_order(bracket_size);
 
     // Create match IDs for all rounds
     let mut match_ids: Vec<Vec<String>> = Vec::new();
@@ -700,30 +711,22 @@ fn create_bracket_matches(
         match_ids.push(round_ids);
     }
 
-    // Insert first round matches
+    // Insert first round matches, the better seed first
     // Some are BYE matches (team vs BYE), some are real matches
-    let mut playing_idx = 0;
-    let mut bye_idx = 0;
+    let mut bye_matches = Vec::new();
 
     for match_idx in 0..first_round_match_count {
         let match_id = &match_ids[0][match_idx];
+        let (high, low) = (order[2 * match_idx], order[2 * match_idx + 1]);
 
-        // Determine if this is a BYE match
-        // BYE matches are distributed: first num_byes matches have a BYE
-        let is_bye_match = match_idx < num_byes;
-
-        let (team1_id, team2_id, is_bye) = if is_bye_match {
-            // BYE match: top-seeded team gets a bye
-            let team = bye_teams[bye_idx];
-            bye_idx += 1;
-            (Some(team.id.clone()), None, true)
-        } else {
-            // Real match: two teams play
-            let t1 = shuffled_playing[playing_idx];
-            let t2 = shuffled_playing[playing_idx + 1];
-            playing_idx += 2;
-            (Some(t1.id.clone()), Some(t2.id.clone()), false)
-        };
+        // The better seed is never past the last team: a bracket is never
+        // more than half byes.
+        let team1_id = Some(teams[high - 1].id.clone());
+        let team2_id = teams.get(low - 1).map(|team| team.id.clone());
+        let is_bye = team2_id.is_none();
+        if is_bye {
+            bye_matches.push(match_idx);
+        }
 
         conn.execute(
             r#"
@@ -773,7 +776,7 @@ fn create_bracket_matches(
     }
 
     // Auto-advance BYE matches (score 13-7)
-    for match_idx in 0..num_byes {
+    for &match_idx in &bye_matches {
         let match_id = &match_ids[0][match_idx];
 
         let team1_id: Option<String> = conn
@@ -2037,6 +2040,114 @@ mod tests {
             let aa = bracket_opening(&conn, "AA");
             assert_eq!((aa.0, aa.1, aa.2.len()), (16, true, 16), "{} teams", field);
         }
+    }
+
+    /// Every first-round pair adds up to the bracket size plus one, and at each
+    /// depth the top seeds sit in different sections: two halves for 1-2, four
+    /// quarters for 1-4, and so on down to the first round.
+    #[test]
+    fn the_seeding_order_is_the_standard_seeded_draw() {
+        assert_eq!(seeding_order(2), [1, 2]);
+        assert_eq!(seeding_order(4), [1, 4, 2, 3]);
+        assert_eq!(seeding_order(8), [1, 8, 4, 5, 2, 7, 3, 6]);
+        for size in [2, 4, 8, 16, 32, 64] {
+            let order = seeding_order(size);
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (1..=size).collect::<Vec<_>>(), "size {}", size);
+            for pair in order.chunks(2) {
+                assert_eq!(pair[0] + pair[1], size + 1, "size {}: {:?}", size, order);
+                assert!(pair[0] < pair[1], "better seed first, size {}: {:?}", size, order);
+            }
+            let mut sections = 2;
+            while sections <= size {
+                let width = size / sections;
+                let found: HashSet<usize> = (1..=sections)
+                    .map(|seed| order.iter().position(|&s| s == seed).unwrap() / width)
+                    .collect();
+                assert_eq!(found.len(), sections, "size {}: seeds 1-{} share a section", size, sections);
+                sections *= 2;
+            }
+        }
+    }
+
+    /// Plays a bracket out with the better-ranked team winning every game, and
+    /// returns the ranks still in it at each round.
+    fn play_favourites(conn: &Connection, name: &str) -> Vec<Vec<i32>> {
+        let rank = |id: &str| id[4..].parse::<i32>().unwrap();
+        let rounds: i32 = conn
+            .query_row(
+                "SELECT MAX(round_number) FROM bracket_matches m JOIN brackets b ON b.id = m.bracket_id WHERE b.name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut by_round = Vec::new();
+        for round in 1..=rounds {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT m.id, m.team1_id, m.team2_id, m.is_bye FROM bracket_matches m \
+                     JOIN brackets b ON b.id = m.bracket_id \
+                     WHERE b.name = ?1 AND m.round_number = ?2 ORDER BY m.match_number",
+                )
+                .unwrap();
+            let rows: Vec<(String, String, Option<String>, bool)> = stmt
+                .query_map(params![name, round], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i32>(3)? != 0))
+                })
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            let mut ranks = Vec::new();
+            for (id, team1, team2, is_bye) in rows {
+                ranks.push(rank(&team1));
+                if let Some(team2) = team2 {
+                    ranks.push(rank(&team2));
+                    if !is_bye {
+                        let (s1, s2) = if rank(&team1) < rank(&team2) { (13, 5) } else { (5, 13) };
+                        record_match_score(conn, &id, s1, s2).unwrap();
+                    }
+                }
+            }
+            by_round.push(ranks);
+        }
+        by_round
+    }
+
+    /// The top seed meets the bottom one, and the top seeds stay apart until
+    /// the end. Byes go to the top seeds, spread the same way, so no two of
+    /// them meet as soon as they come in.
+    #[test]
+    fn a_bracket_is_drawn_seeded() {
+        let conn = setup(74);
+        add_ranked_teams(&conn, 148);
+        configure(&conn, true, true, 32);
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+
+        // B holds ranks 33-64, so its seeds start at 33.
+        for (name, first) in [("A", 1), ("B", 33)] {
+            let rounds = play_favourites(&conn, name);
+            for pair in rounds[0].chunks(2) {
+                assert_eq!(pair[0] + pair[1], 2 * first + 31, "{}: {:?}", name, rounds[0]);
+            }
+            let seeds = |round: &Vec<i32>| {
+                let mut seeds: Vec<i32> = round.iter().map(|r| r - first + 1).collect();
+                seeds.sort_unstable();
+                seeds
+            };
+            assert_eq!(seeds(&rounds[2]), (1..=8).collect::<Vec<_>>(), "{} quarter-finals", name);
+            assert_eq!(seeds(&rounds[3]), [1, 2, 3, 4], "{} semi-finals", name);
+            assert_eq!(seeds(&rounds[4]), [1, 2], "{} final", name);
+        }
+
+        // E is 12 teams in 16: ranks 129-132 have the byes, one per quarter,
+        // and meet the winners of 136 v 137, 133 v 140, 135 v 138 and 134 v 139.
+        let (_, _, _, games, byes) = bracket_opening(&conn, "E");
+        assert_eq!((games, byes), (4, 4));
+        let rounds = play_favourites(&conn, "E");
+        let quarters: Vec<(i32, i32)> = rounds[1].chunks(2).map(|p| (p[0], p[1])).collect();
+        assert_eq!(quarters, [(129, 136), (132, 133), (130, 135), (131, 134)]);
+        assert_eq!(rounds[3], [129, 130]);
     }
 
     /// A leftover that fills a bracket stays one bracket, with its consolante

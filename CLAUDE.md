@@ -312,6 +312,14 @@ rather than decorative:
 - `src-tauri/src/commands/brackets.rs` - Bracket generation and match updates
 - Supports consolante (consolation) brackets
 
+**Round 1 is the standard seeded draw** (`seeding_order` in `brackets.rs`). Within each
+bracket a team's seed is its place in the standings, so B's seed 1 is rank 33. The top seed
+meets the bottom one (1 v 32, 2 v 31, ...), and the top seeds are spread so that, if the better
+seed keeps winning, 1 and 2 meet only in the final, the top four only in the semi-finals, and
+the top eight only in the quarters. A bracket that is not full gives its byes to its top seeds,
+spread the same way, so two bye teams never meet as soon as they come in. Consolantes are
+not seeded: `create_consolante_matches` shuffles the losers.
+
 **A short last bracket is split in two** (`leftover_partner` in `brackets.rs`). Consolantes
 normally come from a main bracket's round 1 losers, one round behind. That fails a last
 bracket that comes up short: 20 teams in 32 places is 4 games, so a consolante of 4. So with
