@@ -108,6 +108,7 @@ export function ExportView({ tournamentId }: ExportViewProps) {
     vs: t('pdf.vs'),
     courtAbbrev: t('pdf.courtAbbrev'),
     courtLegend: t('pdf.courtLegend'),
+    winner: t('pdf.winner'),
     tbd: t('pdf.tbd'),
     bye: t('pdf.bye'),
     final: t('pdf.final'),

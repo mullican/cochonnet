@@ -1,6 +1,8 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { Tournament, Team, Bracket, BracketMatch, PaperSize } from '../../types';
-import { TeamLabelPDF } from './TeamLabelPDF';
+import { TeamLabelPDF, teamLabelStyles } from './TeamLabelPDF';
+import { textWidth } from './textWidth';
+import { formatTeamName } from '../../lib/utils';
 import type { PDFTranslations } from './pdfTranslations';
 import { pageProps, contentSize, PdfLogo, LOGO_BOX_COMPACT } from './pdfPage';
 
@@ -9,6 +11,10 @@ const LINE_LENGTH = 12; // Horizontal line from match to vertical
 const COURT_WIDTH = 24; // The court cell at the left of every match
 
 const PAGE_PADDING = 15;
+const CHAMPION_PADDING = 6;
+const CHAMPION_BORDER = 2;
+// How much larger than the match text the champion's name is printed, room allowing.
+const CHAMPION_SCALE = 1.6;
 const MIN_MATCH_WIDTH = 70;
 
 // Compact dimensions for fitting a bracket on one page.
@@ -81,6 +87,7 @@ const styles = StyleSheet.create({
   },
   bracketContainer: {
     flexDirection: 'row',
+    position: 'relative',
   },
   roundColumn: {
     flexDirection: 'column',
@@ -133,6 +140,11 @@ const styles = StyleSheet.create({
   winner: {
     backgroundColor: '#e8f5e9',
   },
+  // Costs no room: Helvetica's bold capitals are within a few points per name
+  // of the regular ones, and names print in capitals.
+  winnerName: {
+    fontWeight: 'bold',
+  },
   teamName: {
     flex: 1,
   },
@@ -152,6 +164,24 @@ const styles = StyleSheet.create({
   bye: {
     color: '#888',
     fontStyle: 'italic',
+  },
+  champion: {
+    position: 'absolute',
+    bottom: 0,
+    borderWidth: CHAMPION_BORDER,
+    borderColor: '#000',
+    backgroundColor: '#e8f5e9',
+    paddingHorizontal: CHAMPION_PADDING,
+    paddingVertical: 5,
+  },
+  championHeading: {
+    fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 3,
+  },
+  championPlayers: {
+    color: '#444',
+    marginTop: 2,
   },
   lineContainer: {
     width: ROUND_GAP,
@@ -246,6 +276,49 @@ export function BracketPDF({
     </View>
   );
 
+  /**
+   * The bracket's winner, once the final is scored, in the bottom-right corner
+   * across the semi-final and final columns. The semi-finals sit a quarter and
+   * three quarters of the way down and the final halfway, so the bottom of
+   * both columns is empty at every bracket size.
+   */
+  const renderChampion = (finalMatch: BracketMatch | undefined, numRounds: number, matchWidth: number) => {
+    const champion = getTeam(finalMatch?.winnerId);
+    if (!champion) return null;
+    // The name is printed larger than in the matches, but never so large that
+    // it wraps: DANCAUSSE-TREHIN M. would otherwise break mid-word on Letter.
+    // Chip and name both scale with the font size, so measure them at 1pt.
+    // The 5% is for the bold weight, which the regular metrics do not cover.
+    const unit = teamLabelStyles(1);
+    const chip =
+      Math.max(
+        unit.chip.minWidth,
+        textWidth(String(champion.teamNumber), unit.chipText.fontSize) + 2 * unit.chip.paddingHorizontal
+      ) + unit.chip.marginRight;
+    const columns = Math.min(2, numRounds);
+    const width = columns * matchWidth + (columns - 1) * ROUND_GAP;
+    const room = width - 2 * CHAMPION_BORDER - 2 * CHAMPION_PADDING;
+    const nameSize = Math.max(
+      geometry.fontSize,
+      Math.min(geometry.fontSize * CHAMPION_SCALE, room / (chip + textWidth(formatTeamName(champion.captain), 1) * 1.05))
+    );
+    const players = [champion.captain, champion.player2, champion.player3].filter((p) => p?.trim());
+    return (
+      <View
+        style={[styles.champion, { left: (numRounds - columns) * (matchWidth + ROUND_GAP), width }]}
+      >
+        <Text style={[styles.championHeading, { fontSize: geometry.fontSize + 1 }]}>{t.winner}</Text>
+        <TeamLabelPDF
+          team={champion}
+          fontSize={nameSize}
+          fallback=""
+          nameStyle={styles.winnerName}
+        />
+        <Text style={[styles.championPlayers, { fontSize: geometry.fontSize }]}>{players.join(' / ')}</Text>
+      </View>
+    );
+  };
+
   const renderMatch = (match: BracketMatch, matchWidth: number) => (
     <View style={[styles.match, { width: matchWidth }]}>
       <View style={[styles.court, { height: geometry.height }]}>
@@ -265,7 +338,10 @@ export function BracketPDF({
             compact
             fallback={t.tbd}
             style={styles.teamName}
-            nameStyle={!match.team1Id ? styles.tbd : {}}
+            nameStyle={[
+              !match.team1Id ? styles.tbd : {},
+              match.winnerId !== null && match.winnerId === match.team1Id ? styles.winnerName : {},
+            ]}
           />
           {scoreCell(match.team1Score)}
         </View>
@@ -284,7 +360,11 @@ export function BracketPDF({
             compact
             fallback={match.isBye ? t.bye : t.tbd}
             style={styles.teamName}
-            nameStyle={[!match.team2Id ? styles.tbd : {}, match.isBye ? styles.bye : {}]}
+            nameStyle={[
+              !match.team2Id ? styles.tbd : {},
+              match.isBye ? styles.bye : {},
+              match.winnerId !== null && match.winnerId === match.team2Id ? styles.winnerName : {},
+            ]}
           />
           {scoreCell(match.isBye ? null : match.team2Score)}
         </View>
@@ -397,6 +477,11 @@ export function BracketPDF({
                   </View>
                 );
               })}
+              {renderChampion(
+                bracketMatches.find((m) => m.roundNumber === numRounds),
+                numRounds,
+                matchWidth
+              )}
             </View>
           </Page>
         );

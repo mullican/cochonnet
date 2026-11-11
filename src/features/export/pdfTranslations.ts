@@ -11,6 +11,8 @@ export interface PDFTranslations {
   courtLegend: string;
   tbd: string;
   bye: string;
+  /** Heads the box naming a bracket's champion once its final is scored. */
+  winner: string;
   final: string;
   semiFinal: string;
   quarterFinal: string;
