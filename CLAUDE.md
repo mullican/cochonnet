@@ -323,7 +323,11 @@ not seeded: `create_consolante_matches` shuffles the losers.
 **A short last bracket is split in two** (`leftover_partner` in `brackets.rs`). Consolantes
 normally come from a main bracket's round 1 losers, one round behind. That fails a last
 bracket that comes up short: 20 teams in 32 places is 4 games, so a consolante of 4. So with
-*All Teams Seeded into Brackets* and *Consolante* both on, the leftover is split at the draw.
+*All Teams Seeded into Brackets* and *Consolante* both on, the leftover is split at the draw
+— but only when its **own** draw (the next power of two) has **more byes than games**.
+15 teams is a draw of 16 with 7 games and 1 bye, which feeds a consolante of 7 well enough,
+so it stays one bracket; 12 (4 games, 4 byes) stays whole too. Measuring "short" against
+`bracket_size` instead split 15 into 11 and 4, which is what one withdrawal did to AIO 2026.
 The lower ranks form a second bracket, named as the consolante would be (E and EE), which
 takes the largest power of two that leaves the first at least as many teams. It is therefore
 a full bracket, and the first takes the rest with its byes in round 1: 20 teams make 12
@@ -335,7 +339,7 @@ which bracket happens to be last, so a field of 20 in brackets of 32 makes A and
   recognises the second by its name being another bracket's doubled, and the first finds its
   consolante's name already taken; `bracket_demand` applies the same test.
 - **A leftover that fills a bracket is not split** (no byes to avoid): 16 teams at 144 are E
-  with a consolante EE as usual. Nor is anything split with Consolante off, or when only the
+  with a consolante EE as usual, and so are 15 at 143, with one bye. Nor is anything split with Consolante off, or when only the
   top teams advance.
 - This moves E's rounds relative to the others, so **featured courts that suit one roster can
   clash at another**. Saving a plan does not check two pins sharing a court in a wave.

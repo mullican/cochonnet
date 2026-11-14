@@ -1403,10 +1403,16 @@ impl BracketSettings {
     /// full bracket with no byes: 20 teams make 12 (4 games and 4 byes) and 8.
     /// Each then plays from the first round of play, with no consolante.
     ///
-    /// A leftover that already fills a bracket has no byes to avoid, so it stays
-    /// whole, and so does one too small to leave two brackets.
+    /// "Short" is measured against the leftover's own draw, not the bracket
+    /// size: it is split only when that draw has more byes than games. 15 teams
+    /// in a draw of 16 is 7 games and 1 bye, which feeds a consolante of 7 well
+    /// enough, so it stays whole; 20 in a draw of 32 is 4 games and 12 byes.
+    /// A leftover that fills its draw has no byes at all, so it stays whole too,
+    /// and so does one too small to leave two brackets.
     fn leftover_partner(&self, teams: i32) -> Option<i32> {
-        let short = teams < self.bracket_size && teams.count_ones() > 1;
+        let draw = (teams.max(1) as u32).next_power_of_two() as i32;
+        let (byes, games) = (draw - teams, teams - draw / 2);
+        let short = teams < self.bracket_size && byes > games;
         let half = teams / 2;
         (self.consolantes_follow() && short && half >= 2).then(|| 1 << half.ilog2())
     }
@@ -1925,14 +1931,17 @@ mod tests {
             bracket_size: 32,
             has_consolante: true,
         };
-        for (teams, partner) in [
-            (5, 2), (6, 2), (7, 2), (9, 4), (12, 4), (15, 4), (17, 8),
-            (19, 8), (20, 8), (24, 8), (25, 8), (28, 8), (31, 8),
-        ] {
+        // More byes than games in the leftover's own draw.
+        for (teams, partner) in [(5, 2), (9, 4), (10, 4), (11, 4), (17, 8), (19, 8), (20, 8), (23, 8)] {
             assert_eq!(settings.leftover_partner(teams), Some(partner), "{} teams", teams);
         }
         // A full bracket stays whole, whatever its size, and so do 2 and 3 teams.
         for teams in [2, 3, 4, 8, 16, 32] {
+            assert_eq!(settings.leftover_partner(teams), None, "{} teams", teams);
+        }
+        // So does one with no more byes than games: 15 is 7 games and 1 bye,
+        // 12 is 4 of each.
+        for teams in [6, 7, 12, 13, 15, 24, 25, 28, 31] {
             assert_eq!(settings.leftover_partner(teams), None, "{} teams", teams);
         }
         for teams in 5..32 {
@@ -1949,7 +1958,7 @@ mod tests {
         assert_eq!(top_teams_only.leftover_partner(20), None);
         // "Short" is relative to the bracket size in use.
         let smaller = BracketSettings { bracket_size: 16, advance_all: true, has_consolante: true, advance_count: None };
-        assert_eq!(smaller.leftover_partner(12), Some(4));
+        assert_eq!(smaller.leftover_partner(10), Some(4));
         assert_eq!(smaller.leftover_partner(16), None);
     }
 
@@ -2195,13 +2204,34 @@ mod tests {
         assert_eq!(bracket_opening(&conn, "AA").2.len(), 8);
 
         let conn = setup(40);
-        add_ranked_teams(&conn, 28);
+        add_ranked_teams(&conn, 26);
         configure(&conn, true, true, 16);
         build_brackets(&conn, TOURNAMENT_ID).unwrap();
         let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
         assert_eq!(names, ["A", "B", "BB"]);
-        assert_eq!(bracket_opening(&conn, "B").2.len(), 8);
+        assert_eq!(bracket_opening(&conn, "B").2.len(), 6);
         assert_eq!(bracket_opening(&conn, "BB").2.len(), 4);
+    }
+
+    /// The 2026 Amelia Island Open with one team withdrawn: 143 teams leave 15
+    /// for E, one bye short of a full draw. That stays one bracket, and its
+    /// consolante comes from its 7 first-round losers as A's does.
+    #[test]
+    fn a_leftover_one_bye_short_is_not_split() {
+        let conn = setup(74);
+        add_ranked_teams(&conn, 143);
+        configure(&conn, true, true, 32);
+        assert_eq!(demand(&conn, 143), [71, 71, 36, 18, 8], "foreseen");
+
+        build_brackets(&conn, TOURNAMENT_ID).unwrap();
+        let names: Vec<String> = bracket_rows(&conn).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["A", "B", "C", "D", "E"]);
+        let ranks = (129..=143).map(|i| format!("team{}", i)).collect::<Vec<_>>();
+        assert_eq!(bracket_opening(&conn, "E"), (16, false, ranks, 7, 1));
+
+        play_round_one(&conn, "E");
+        let ee = bracket_opening(&conn, "EE");
+        assert_eq!((ee.0, ee.1, ee.2.len(), ee.3, ee.4), (8, true, 7, 3, 1));
     }
 
     /// Nine advancing teams with a bracket size of eight leaves one team who
